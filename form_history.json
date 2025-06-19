@@ -1,0 +1,22 @@
+{
+  "summaries": [
+    "TestAlert",
+    "test"
+  ],
+  "descriptions": [
+    "TestDesc",
+    "test"
+  ],
+  "services": [
+    "tst",
+    "test"
+  ],
+  "severities": [
+    "warning"
+  ],
+  "durations": [
+    "15m",
+    "10s"
+  ],
+  "custom_labels": []
+}

@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ADAM - Alerts generator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-section {
+            margin-bottom: 30px;
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        .section-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #2196F3;
+        }
+        .horizontal-sections {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .horizontal-section {
+            flex: 1;
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="text"], textarea, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        .datalist-container {
+            position: relative;
+        }
+        .datalist-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-top: none;
+            max-height: 150px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+        .suggestion-item {
+            padding: 8px 10px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+        }
+        .suggestion-item:hover {
+            background-color: #f0f0f0;
+        }
+        .custom-labels, .custom-annotations {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+        .label-pair, .annotation-pair {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .label-pair input, .annotation-pair input {
+            flex: 1;
+        }
+        .add-label-btn, .add-annotation-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-bottom: 15px;
+        }
+        .remove-label-btn, .remove-annotation-btn {
+            background: #f44336;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .submit-btn {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+        .submit-btn:hover {
+            background: #1976D2;
+        }
+        .alert {
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            min-width: 300px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+        }
+        .alert.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .alert-error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .config-info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2196F3;
+        }
+    </style>
+    <script>
+        function showSuggestions(inputId, suggestions) {
+            const input = document.getElementById(inputId);
+            const container = input.parentElement;
+            let suggestionsDiv = container.querySelector('.datalist-suggestions');
+            
+            if (!suggestionsDiv) {
+                suggestionsDiv = document.createElement('div');
+                suggestionsDiv.className = 'datalist-suggestions';
+                container.appendChild(suggestionsDiv);
+            }
+            
+            if (suggestions.length > 0) {
+                suggestionsDiv.innerHTML = '';
+                suggestions.forEach(suggestion => {
+                    const item = document.createElement('div');
+                    item.className = 'suggestion-item';
+                    item.textContent = suggestion;
+                    item.onclick = () => {
+                        input.value = suggestion;
+                        suggestionsDiv.style.display = 'none';
+                    };
+                    suggestionsDiv.appendChild(item);
+                });
+                suggestionsDiv.style.display = 'block';
+            } else {
+                suggestionsDiv.style.display = 'none';
+            }
+        }
+        
+        function hideSuggestions(inputId) {
+            const input = document.getElementById(inputId);
+            const container = input.parentElement;
+            const suggestionsDiv = container.querySelector('.datalist-suggestions');
+            if (suggestionsDiv) {
+                setTimeout(() => {
+                    suggestionsDiv.style.display = 'none';
+                }, 200);
+            }
+        }
+        
+        function addLabelPair() {
+            const container = document.getElementById('custom-labels-container');
+            const labelPair = document.createElement('div');
+            labelPair.className = 'label-pair';
+            labelPair.innerHTML = `
+                <input type="text" name="label_keys" placeholder="Label key">
+                <input type="text" name="label_values" placeholder="Label value">
+                <button type="button" class="remove-label-btn" onclick="this.parentElement.remove()">Remove</button>
+            `;
+            container.appendChild(labelPair);
+        }
+        
+        function addAnnotationPair() {
+            const container = document.getElementById('custom-annotations-container');
+            const annotationPair = document.createElement('div');
+            annotationPair.className = 'annotation-pair';
+            annotationPair.innerHTML = `
+                <input type="text" name="annotation_keys" placeholder="Annotation key">
+                <input type="text" name="annotation_values" placeholder="Annotation value">
+                <button type="button" class="remove-annotation-btn" onclick="this.parentElement.remove()">Remove</button>
+            `;
+            container.appendChild(annotationPair);
+        }
+        
+        function removeLabelPair(button) {
+            button.parentElement.remove();
+        }
+        
+        function removeAnnotationPair(button) {
+            button.parentElement.remove();
+        }
+        
+        function showAlert(message, type) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.textContent = message;
+            document.body.appendChild(alertDiv);
+            
+            // Show alert
+            setTimeout(() => {
+                alertDiv.classList.add('show');
+            }, 100);
+            
+            // Hide alert after 3 seconds
+            setTimeout(() => {
+                alertDiv.classList.remove('show');
+                setTimeout(() => {
+                    document.body.removeChild(alertDiv);
+                }, 300);
+            }, 3000);
+        }
+        
+        // Show success message if present
+        window.onload = function() {
+            const successMessage = document.querySelector('.alert-success');
+            if (successMessage && successMessage.textContent.includes('Alert sent successfully')) {
+                showAlert('Alert sent successfully', 'success');
+                successMessage.style.display = 'none';
+            }
+        };
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>ADAM - Alerts generator</h1>
+        
+        <div class="config-info">
+            <strong>Configuration:</strong> Alertmanager URL: {{ alertmanager_url }}
+        </div>
+        
+        {% if message %}
+            <div class="alert alert-{{ message_type }}">
+                {{ message }}
+            </div>
+        {% endif %}
+        
+        <form method="POST">
+            <!-- Labels and Annotations Section -->
+            <div class="horizontal-sections">
+                <!-- Labels Section -->
+                <div class="horizontal-section">
+                    <div class="section-title">Labels</div>
+                    
+                    <div class="form-group">
+                        <label for="severity">Severity *</label>
+                        <div class="datalist-container">
+                            <select id="severity" name="severity" required
+                                    onfocus="showSuggestions('severity', {{ history.severities | tojson | safe }})"
+                                    onblur="hideSuggestions('severity')">
+                                <option value="">Select severity</option>
+                                <option value="info" {% if form_data.severity == 'info' %}selected{% endif %}>info</option>
+                                <option value="warning" {% if form_data.severity == 'warning' %}selected{% endif %}>warning</option>
+                                <option value="critical" {% if form_data.severity == 'critical' %}selected{% endif %}>critical</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="service">Service *</label>
+                        <div class="datalist-container">
+                            <input type="text" id="service" name="service" required 
+                                   value="{{ form_data.service }}"
+                                   onfocus="showSuggestions('service', {{ history.services | tojson | safe }})"
+                                   onblur="hideSuggestions('service')"
+                                   placeholder="Enter service name">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Custom Labels (Optional)</label>
+                        <div class="custom-labels">
+                            <button type="button" class="add-label-btn" onclick="addLabelPair()">Add Label</button>
+                            <div id="custom-labels-container">
+                                {% for key, value in form_data.custom_labels.items() %}
+                                    <div class="label-pair">
+                                        <input type="text" name="label_keys" value="{{ key }}" placeholder="Label key">
+                                        <input type="text" name="label_values" value="{{ value }}" placeholder="Label value">
+                                        <button type="button" class="remove-label-btn" onclick="this.parentElement.remove()">Remove</button>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Annotations Section -->
+                <div class="horizontal-section">
+                    <div class="section-title">Annotations</div>
+                    
+                    <div class="form-group">
+                        <label for="summary">Summary *</label>
+                        <div class="datalist-container">
+                            <input type="text" id="summary" name="summary" required 
+                                   value="{{ form_data.summary }}"
+                                   onfocus="showSuggestions('summary', {{ history.summaries | tojson | safe }})"
+                                   onblur="hideSuggestions('summary')"
+                                   placeholder="Enter alert summary">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="description">Description *</label>
+                        <div class="datalist-container">
+                            <textarea id="description" name="description" required 
+                                      onfocus="showSuggestions('description', {{ history.descriptions | tojson | safe }})"
+                                      onblur="hideSuggestions('description')"
+                                      placeholder="Enter alert description">{{ form_data.description }}</textarea>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Custom Annotations (Optional)</label>
+                        <div class="custom-annotations">
+                            <button type="button" class="add-annotation-btn" onclick="addAnnotationPair()">Add Annotation</button>
+                            <div id="custom-annotations-container">
+                                {% for key, value in form_data.custom_annotations.items() %}
+                                    <div class="annotation-pair">
+                                        <input type="text" name="annotation_keys" value="{{ key }}" placeholder="Annotation key">
+                                        <input type="text" name="annotation_values" value="{{ value }}" placeholder="Annotation value">
+                                        <button type="button" class="remove-annotation-btn" onclick="this.parentElement.remove()">Remove</button>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Duration Section -->
+            <div class="form-section">
+                <div class="section-title">Duration</div>
+                
+                <div class="form-group">
+                    <label for="duration">Duration *</label>
+                    <div class="datalist-container">
+                        <select id="duration" name="duration" required
+                                onfocus="showSuggestions('duration', {{ history.durations | tojson | safe }})"
+                                onblur="hideSuggestions('duration')">
+                            <option value="">Select duration</option>
+                            <option value="10s" {% if form_data.duration == '10s' %}selected{% endif %}>10 seconds</option>
+                            <option value="1m" {% if form_data.duration == '1m' %}selected{% endif %}>1 minute</option>
+                            <option value="5m" {% if form_data.duration == '5m' %}selected{% endif %}>5 minutes</option>
+                            <option value="15m" {% if form_data.duration == '15m' %}selected{% endif %}>15 minutes</option>
+                            <option value="1h" {% if form_data.duration == '1h' %}selected{% endif %}>1 hour</option>
+                            <option value="12h" {% if form_data.duration == '12h' %}selected{% endif %}>12 hours</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <button type="submit" class="submit-btn">Send Alert</button>
+        </form>
+    </div>
+</body>
+</html> 
