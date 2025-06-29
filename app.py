@@ -452,9 +452,14 @@ async def bulk_generate_alerts(
     import random
     
     # Random words for summaries and descriptions
-    summary_words = [
+    summary_nouns = [
         "Database", "Connection", "Memory", "CPU", "Disk", "Network", "Service", "API", "Cache", "Queue",
-        "Timeout", "Error", "Failure", "Warning", "Critical", "High", "Low", "Medium", "Overflow", "Underflow"
+        "Timeout", "Error", "Failure", "Warning", "Critical", "Overflow", "Underflow", "Server", "Client", "Process"
+    ]
+    
+    summary_adjectives = [
+        "High", "Low", "Critical", "Warning", "Error", "Failed", "Slow", "Fast", "Overloaded", "Underutilized",
+        "Broken", "Unstable", "Degraded", "Unavailable", "Responsive", "Unresponsive", "Healthy", "Unhealthy"
     ]
     
     description_words = [
@@ -479,7 +484,7 @@ async def bulk_generate_alerts(
     for i in range(count):
         try:
             # Generate random alert data
-            summary = f"{random.choice(summary_words)} {random.choice(summary_words)}"
+            summary = f"{random.choice(summary_nouns)}{random.choice(summary_adjectives)}"
             description = f"{summary} {random.choice(description_words)}"
             severity = random.choice(severities)
             service = random.choice(service_names)
