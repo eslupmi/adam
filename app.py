@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 import json
 import os
 import asyncio
+import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
 import uvicorn
@@ -17,6 +18,9 @@ ALERTMANAGER_URL = os.environ.get('ALERTMANAGER_URL', 'http://localhost:9093')
 
 # File to store form history
 HISTORY_FILE = 'form_history.json'
+
+# File to store sent alerts for auto-resolve
+SENT_ALERTS_FILE = 'sent_alerts.json'
 
 # Templates
 templates = Jinja2Templates(directory="templates")
@@ -310,6 +314,23 @@ async def send_alert(
     )
     
     if success:
+        # Generate unique alert ID
+        alert_id = str(uuid.uuid4())
+        
+        # Save alert info for later resolve
+        alert_info = {
+            'id': alert_id,
+            'summary': summary.strip(),
+            'description': description.strip(),
+            'severity': severity.strip(),
+            'service': service.strip(),
+            'duration': duration.strip(),
+            'custom_labels': custom_labels,
+            'custom_annotations': custom_annotations,
+            'sent_at': datetime.utcnow().isoformat()
+        }
+        add_sent_alert(alert_info)
+        
         # Start auto-resolve task
         asyncio.create_task(auto_resolve_alert(
             duration.strip(),
@@ -362,6 +383,156 @@ async def send_alert(
                 'custom_annotations': custom_annotations
             }
         })
+
+def load_sent_alerts():
+    """Load sent alerts from JSON file"""
+    if os.path.exists(SENT_ALERTS_FILE):
+        try:
+            with open(SENT_ALERTS_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            pass
+    return []
+
+def save_sent_alerts(alerts):
+    """Save sent alerts to JSON file"""
+    with open(SENT_ALERTS_FILE, 'w') as f:
+        json.dump(alerts, f, indent=2)
+
+def add_sent_alert(alert_info):
+    """Add alert to sent alerts list"""
+    alerts = load_sent_alerts()
+    alerts.append(alert_info)
+    save_sent_alerts(alerts)
+
+def get_sent_alerts():
+    """Get all sent alerts"""
+    return load_sent_alerts()
+
+def resolve_sent_alert(alert_id):
+    """Resolve a specific sent alert"""
+    alerts = load_sent_alerts()
+    for alert in alerts:
+        if alert.get('id') == alert_id:
+            # Send resolved alert
+            success, message = send_resolved_alert_with_curl(
+                alert['summary'],
+                alert['description'],
+                alert['severity'],
+                alert['service'],
+                alert.get('custom_labels', {}),
+                alert.get('custom_annotations', {})
+            )
+            if success:
+                # Remove from sent alerts
+                alerts = [a for a in alerts if a.get('id') != alert_id]
+                save_sent_alerts(alerts)
+                return True, "Alert resolved successfully"
+            else:
+                return False, message
+    return False, "Alert not found"
+
+@app.get("/bulk-generate", response_class=HTMLResponse)
+async def bulk_generate_page(request: Request):
+    """Bulk generate alerts page"""
+    sent_alerts = get_sent_alerts()
+    return templates.TemplateResponse("bulk_generate.html", {
+        "request": request,
+        "alertmanager_url": ALERTMANAGER_URL,
+        "sent_alerts": sent_alerts
+    })
+
+@app.post("/bulk-generate", response_class=HTMLResponse)
+async def bulk_generate_alerts(
+    request: Request,
+    count: int = Form(10),
+    duration: str = Form("5m")
+):
+    """Generate multiple random alerts"""
+    import random
+    
+    # Random words for summaries and descriptions
+    summary_words = [
+        "Database", "Connection", "Memory", "CPU", "Disk", "Network", "Service", "API", "Cache", "Queue",
+        "Timeout", "Error", "Failure", "Warning", "Critical", "High", "Low", "Medium", "Overflow", "Underflow"
+    ]
+    
+    description_words = [
+        "is experiencing issues", "has high latency", "is running out of resources", "is not responding",
+        "has exceeded threshold", "is down", "is slow", "is overloaded", "has errors", "needs attention",
+        "requires maintenance", "is unstable", "has performance problems", "is failing", "is degraded"
+    ]
+    
+    # Random service names
+    service_names = [
+        "auth-service", "api-gateway", "user-service", "payment-service", "notification-service",
+        "database-service", "cache-service", "queue-service", "storage-service", "monitoring-service",
+        "frontend-app", "backend-api", "mobile-api", "admin-panel", "analytics-service",
+        "search-service", "email-service", "sms-service", "file-service", "log-service"
+    ]
+    
+    severities = ["info", "warning", "critical"]
+    
+    generated_count = 0
+    errors = []
+    
+    for i in range(count):
+        try:
+            # Generate random alert data
+            summary = f"{random.choice(summary_words)} {random.choice(summary_words)}"
+            description = f"{summary} {random.choice(description_words)}"
+            severity = random.choice(severities)
+            service = random.choice(service_names)
+            
+            # Send alert
+            success, message = send_alert_with_curl(
+                summary, description, severity, duration, service, {}, {}
+            )
+            
+            if success:
+                # Generate unique alert ID
+                alert_id = str(uuid.uuid4())
+                
+                # Save alert info
+                alert_info = {
+                    'id': alert_id,
+                    'summary': summary,
+                    'description': description,
+                    'severity': severity,
+                    'service': service,
+                    'duration': duration,
+                    'custom_labels': {},
+                    'custom_annotations': {},
+                    'sent_at': datetime.utcnow().isoformat()
+                }
+                add_sent_alert(alert_info)
+                
+                # Start auto-resolve task
+                asyncio.create_task(auto_resolve_alert(
+                    duration, summary, description, severity, service, {}, {}
+                ))
+                
+                generated_count += 1
+            else:
+                errors.append(f"Alert {i+1}: {message}")
+                
+        except Exception as e:
+            errors.append(f"Alert {i+1}: {str(e)}")
+    
+    sent_alerts = get_sent_alerts()
+    return templates.TemplateResponse("bulk_generate.html", {
+        "request": request,
+        "alertmanager_url": ALERTMANAGER_URL,
+        "sent_alerts": sent_alerts,
+        "message": f"Generated {generated_count} alerts successfully" + (f". Errors: {len(errors)}" if errors else ""),
+        "message_type": "success" if generated_count > 0 else "error"
+    })
+
+@app.post("/resolve-alert/{alert_id}")
+async def resolve_alert_endpoint(alert_id: str):
+    """Resolve a specific alert"""
+    success, message = resolve_sent_alert(alert_id)
+    return {"success": success, "message": message}
 
 if __name__ == "__main__":
     port = int(os.environ.get("ADAM_PORT", 5067))

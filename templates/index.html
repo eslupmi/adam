@@ -21,6 +21,22 @@
             text-align: center;
             margin-bottom: 30px;
         }
+        .nav-links {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .nav-links a {
+            color: #2196F3;
+            text-decoration: none;
+            margin: 0 15px;
+            padding: 8px 16px;
+            border: 1px solid #2196F3;
+            border-radius: 4px;
+        }
+        .nav-links a:hover {
+            background-color: #2196F3;
+            color: white;
+        }
         .form-section {
             margin-bottom: 30px;
             border: 1px solid #ddd;
@@ -278,6 +294,11 @@
 <body>
     <div class="container">
         <h1>ADAM - Alerts generator</h1>
+        
+        <div class="nav-links">
+            <a href="/">Single Alert</a>
+            <a href="/bulk-generate">Bulk Generate</a>
+        </div>
         
         <div class="config-info">
             <strong>Configuration:</strong> Alertmanager URL: {{ alertmanager_url }}
