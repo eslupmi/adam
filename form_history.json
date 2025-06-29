@@ -1,20 +1,42 @@
 {
   "summaries": [
+    "summary",
+    "\u0435\u0443\u044b\u0435\u0443\u0435\u0443",
+    "tttt",
+    "iuiu",
+    "tututu",
     "TestAlert",
     "test"
   ],
   "descriptions": [
+    "Descr",
+    "\u0444\u0432\u0444\u044b\u0432\u0444\u044b\u0432\u0444\u044b\u0432",
+    "tsdfd",
+    "dsdsd",
+    "dslk",
     "TestDesc",
     "test"
   ],
   "services": [
+    "service",
+    "text",
+    "test44",
+    "test4",
+    "test22",
+    "test1",
+    "trap",
+    "rere",
     "tst",
     "test"
   ],
   "severities": [
+    "critical",
+    "info",
     "warning"
   ],
   "durations": [
+    "5m",
+    "1h",
     "15m",
     "10s"
   ],

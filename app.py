@@ -2,12 +2,13 @@ from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-import subprocess
 import json
 import os
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from typing import List, Optional
 import uvicorn
+import requests
 
 app = FastAPI(title="ADAM - Alerts generator", version="1.0.0")
 
@@ -50,46 +51,166 @@ def add_to_history(history, field, value):
         # Keep only last 10 entries
         history[field] = history[field][:10]
 
-def send_alert_with_amtool(summary, description, severity, duration, service, custom_labels, custom_annotations):
-    """Send alert using amtool command"""
+def send_alert_with_curl(summary, description, severity, duration, service, custom_labels, custom_annotations):
+    """Send alert using curl command to Alertmanager API"""
     try:
-        # Build amtool command with correct format
-        cmd = [
-            'amtool', 'alert', 'add', summary,
-            f'severity={severity}',
-            f'service={service}',
-            f'--annotation=summary="{summary}"',
-            f'--annotation=description="{description}"',
-            f'--annotation=duration="{duration}"',
-            f'--alertmanager.url={ALERTMANAGER_URL}'
+        # Generate ISO8601 timestamps
+        now = datetime.utcnow()
+        starts_at = (now - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        # Prepare the alert payload in the same format as the working bash script
+        alert_data = [
+            {
+                "labels": {
+                    "alertname": summary,
+                    "severity": severity,
+                    "service": service
+                },
+                "annotations": {
+                    "summary": summary,
+                    "description": description
+                },
+                "startsAt": starts_at,
+                "endsAt": None
+            }
         ]
         
         # Add custom labels
         for label_key, label_value in custom_labels.items():
             if label_key and label_value:
-                cmd.append(f'{label_key}={label_value}')
+                alert_data[0]["labels"][label_key] = label_value
         
         # Add custom annotations
         for annotation_key, annotation_value in custom_annotations.items():
             if annotation_key and annotation_value:
-                cmd.append(f'--annotation={annotation_key}="{annotation_value}"')
+                alert_data[0]["annotations"][annotation_key] = annotation_value
         
-        print(f"Executing command: {' '.join(cmd)}")  # Debug output
+        # Prepare headers
+        headers = {
+            'Content-Type': 'application/json'
+        }
         
-        # Execute amtool command
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        # Send POST request to Alertmanager
+        alertmanager_api_url = f"{ALERTMANAGER_URL}/api/v2/alerts"
+        print(f"Sending alert to: {alertmanager_api_url}")
+        print(f"Alert data: {json.dumps(alert_data, indent=2)}")
         
-        if result.returncode == 0:
+        response = requests.post(
+            alertmanager_api_url,
+            json=alert_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
             return True, "Alert sent successfully"
         else:
-            return False, f"Failed to send alert: {result.stderr}"
+            return False, f"Failed to send alert: HTTP {response.status_code} - {response.text}"
             
-    except subprocess.TimeoutExpired:
+    except requests.exceptions.Timeout:
         return False, "Timeout while sending alert"
-    except FileNotFoundError:
-        return False, "amtool command not found. Please install Alertmanager tools."
+    except requests.exceptions.ConnectionError:
+        return False, f"Connection error. Cannot connect to Alertmanager at {ALERTMANAGER_URL}"
     except Exception as e:
         return False, f"Error sending alert: {str(e)}"
+
+def send_resolved_alert_with_curl(summary, description, severity, service, custom_labels, custom_annotations):
+    """Send resolved alert using curl command to Alertmanager API"""
+    try:
+        # Generate ISO8601 timestamps
+        now = datetime.utcnow()
+        starts_at = (now - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ends_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        # Prepare the resolved alert payload
+        alert_data = [
+            {
+                "labels": {
+                    "alertname": summary,
+                    "severity": severity,
+                    "service": service
+                },
+                "annotations": {
+                    "summary": summary,
+                    "description": description
+                },
+                "startsAt": starts_at,
+                "endsAt": ends_at
+            }
+        ]
+        
+        # Add custom labels
+        for label_key, label_value in custom_labels.items():
+            if label_key and label_value:
+                alert_data[0]["labels"][label_key] = label_value
+        
+        # Add custom annotations
+        for annotation_key, annotation_value in custom_annotations.items():
+            if annotation_key and annotation_value:
+                alert_data[0]["annotations"][annotation_key] = annotation_value
+        
+        # Prepare headers
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        
+        # Send POST request to Alertmanager
+        alertmanager_api_url = f"{ALERTMANAGER_URL}/api/v2/alerts"
+        print(f"Sending resolved alert to: {alertmanager_api_url}")
+        print(f"Resolved alert data: {json.dumps(alert_data, indent=2)}")
+        
+        response = requests.post(
+            alertmanager_api_url,
+            json=alert_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return True, "Resolved alert sent successfully"
+        else:
+            return False, f"Failed to send resolved alert: HTTP {response.status_code} - {response.text}"
+            
+    except requests.exceptions.Timeout:
+        return False, "Timeout while sending resolved alert"
+    except requests.exceptions.ConnectionError:
+        return False, f"Connection error. Cannot connect to Alertmanager at {ALERTMANAGER_URL}"
+    except Exception as e:
+        return False, f"Error sending resolved alert: {str(e)}"
+
+async def auto_resolve_alert(duration_str, summary, description, severity, service, custom_labels, custom_annotations):
+    """Automatically resolve alert after specified duration"""
+    try:
+        # Parse duration string to seconds
+        duration_seconds = parse_duration_to_seconds(duration_str)
+        
+        # Wait for the specified duration
+        await asyncio.sleep(duration_seconds)
+        
+        # Send resolved alert
+        success, message = send_resolved_alert_with_curl(
+            summary, description, severity, service, custom_labels, custom_annotations
+        )
+        
+        if success:
+            print(f"Auto-resolved alert: {summary}")
+        else:
+            print(f"Failed to auto-resolve alert: {summary} - {message}")
+            
+    except Exception as e:
+        print(f"Error in auto-resolve task for alert {summary}: {str(e)}")
+
+def parse_duration_to_seconds(duration_str):
+    """Parse duration string (e.g., '10s', '1m', '5m', '1h') to seconds"""
+    if duration_str.endswith('s'):
+        return int(duration_str[:-1])
+    elif duration_str.endswith('m'):
+        return int(duration_str[:-1]) * 60
+    elif duration_str.endswith('h'):
+        return int(duration_str[:-1]) * 3600
+    else:
+        # Default to 5 minutes if format is unknown
+        return 300
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -177,8 +298,8 @@ async def send_alert(
             }
         })
     
-    # Send alert using amtool
-    success, message = send_alert_with_amtool(
+    # Send alert using curl
+    success, message = send_alert_with_curl(
         summary.strip(), 
         description.strip(), 
         severity.strip(),
@@ -189,6 +310,17 @@ async def send_alert(
     )
     
     if success:
+        # Start auto-resolve task
+        asyncio.create_task(auto_resolve_alert(
+            duration.strip(),
+            summary.strip(),
+            description.strip(),
+            severity.strip(),
+            service.strip(),
+            custom_labels,
+            custom_annotations
+        ))
+        
         # Update history
         add_to_history(history, 'summaries', summary.strip())
         add_to_history(history, 'descriptions', description.strip())

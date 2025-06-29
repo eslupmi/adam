@@ -31,8 +31,8 @@ def test_amtool_alert():
         f'service={service}',
         f'--annotation=summary="{summary}"',
         f'--annotation=description="{description}"',
-        f'--annotation=duration="{duration}"',
         f'--alertmanager.url={alertmanager_url}'
+        f'--duration="{duration}"',
     ]
     
     # Add custom labels
