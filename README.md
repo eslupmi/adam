@@ -17,6 +17,9 @@ A simple web interface for sending alerts to Alertmanager using the standard `am
 - **Debug logging** - Comprehensive logging with configurable levels
 - **Real-time alert display** - View active alerts with countdown timers
 - **Manual resolution** - Resolve alerts manually before auto-resolve
+- **Auto-refresh interface** - Alerts update automatically every 2 seconds
+- **Live countdown timers** - Real-time countdown to auto-resolve
+- **Seamless updates** - No manual refresh needed
 
 ## Requirements
 
@@ -109,6 +112,21 @@ The main page now displays all active alerts with the following features:
 - **Resolve Button**: Manually resolve alerts before their scheduled time
 - **Alert Information**: Complete alert details including custom labels and annotations
 - **Real-time Updates**: Timers update automatically without page refresh
+- **Auto-refresh**: Alerts list updates every 2 seconds automatically
+- **Loading Indicators**: Visual feedback during data updates
+- **Smart Refresh**: Auto-refresh pauses when browser tab is hidden
+- **Seamless Experience**: No manual refresh needed
+
+### Auto-Refresh Features
+
+The interface automatically refreshes every 2 seconds to show the most current alert data:
+
+- **Automatic Updates**: No need to manually refresh the page
+- **Live Timers**: Countdown timers update every second
+- **Loading Feedback**: Spinner shows during data updates
+- **Error Handling**: Graceful handling of network errors
+- **Performance Optimized**: Pauses when tab is not visible
+- **Seamless Experience**: Completely automatic, no user interaction needed
 
 ## API Documentation
 

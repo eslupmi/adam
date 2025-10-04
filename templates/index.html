@@ -279,6 +279,29 @@
             font-style: italic;
             padding: 20px;
         }
+        .loading-indicator {
+            text-align: center;
+            padding: 10px;
+            color: #666;
+            font-style: italic;
+        }
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #2196F3;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .alerts-header {
+            margin-bottom: 15px;
+        }
     </style>
     <script>
         function showSuggestions(inputId, suggestions) {
@@ -433,11 +456,8 @@
                 
                 if (result.success) {
                     showAlert('Alert resolved successfully', 'success');
-                    // Remove the alert from the UI
-                    const alertElement = document.querySelector(`[data-alert-id="${alertId}"]`);
-                    if (alertElement) {
-                        alertElement.remove();
-                    }
+                    // Refresh alerts to update the list
+                    setTimeout(refreshAlerts, 500);
                 } else {
                     showAlert(`Failed to resolve alert: ${result.message}`, 'error');
                     button.disabled = false;
@@ -450,12 +470,139 @@
             }
         }
         
+        let refreshInterval;
+        let isRefreshing = false;
+        
+        async function refreshAlerts() {
+            if (isRefreshing) return;
+            
+            isRefreshing = true;
+            const alertsSection = document.querySelector('.alerts-section');
+            
+            // Show loading indicator
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'loading-indicator';
+            loadingDiv.innerHTML = '<div class="loading-spinner"></div>Updating alerts...';
+            
+            // Insert loading indicator after header
+            const header = alertsSection.querySelector('.alerts-header');
+            if (header) {
+                header.insertAdjacentElement('afterend', loadingDiv);
+            }
+            
+            try {
+                const response = await fetch('/api/alerts');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    updateAlertsDisplay(data.active_alerts);
+                } else {
+                    console.error('Failed to fetch alerts:', data);
+                }
+            } catch (error) {
+                console.error('Error refreshing alerts:', error);
+                showAlert('Failed to refresh alerts', 'error');
+            } finally {
+                // Remove loading indicator
+                if (loadingDiv.parentNode) {
+                    loadingDiv.parentNode.removeChild(loadingDiv);
+                }
+                
+                isRefreshing = false;
+            }
+        }
+        
+        function updateAlertsDisplay(alerts) {
+            const alertsSection = document.querySelector('.alerts-section');
+            if (!alertsSection) return;
+            
+            // Update header count
+            const header = alertsSection.querySelector('.alerts-header .section-title');
+            if (header) {
+                header.textContent = `Active Alerts (${alerts.length})`;
+            }
+            
+            // Find alerts container
+            let alertsContainer = alertsSection.querySelector('.alerts-container');
+            if (!alertsContainer) {
+                alertsContainer = document.createElement('div');
+                alertsContainer.className = 'alerts-container';
+                alertsSection.appendChild(alertsContainer);
+            }
+            
+            // Clear existing alerts
+            alertsContainer.innerHTML = '';
+            
+            if (alerts.length === 0) {
+                alertsContainer.innerHTML = '<div class="no-alerts">No active alerts</div>';
+                return;
+            }
+            
+            // Add each alert
+            alerts.forEach(alert => {
+                const alertElement = createAlertElement(alert);
+                alertsContainer.appendChild(alertElement);
+            });
+            
+            // Update timers immediately
+            updateAlertTimers();
+        }
+        
+        function createAlertElement(alert) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert-item';
+            alertDiv.setAttribute('data-alert-id', alert.id);
+            
+            const sentTime = new Date(alert.sent_at).toLocaleString();
+            const resolveTimestamp = Math.floor(new Date(alert.resolve_at).getTime() / 1000);
+            
+            alertDiv.innerHTML = `
+                <div class="alert-header">
+                    <div class="alert-title">${alert.summary}</div>
+                    <div class="alert-severity severity-${alert.severity}">${alert.severity}</div>
+                </div>
+                
+                <div class="alert-details">
+                    <div class="alert-detail"><strong>Service:</strong> ${alert.service}</div>
+                    <div class="alert-detail"><strong>Description:</strong> ${alert.description}</div>
+                    <div class="alert-detail"><strong>Duration:</strong> ${alert.duration}</div>
+                    <div class="alert-detail"><strong>Sent:</strong> ${sentTime}</div>
+                </div>
+                
+                <div class="resolve-time resolve-timer" 
+                     data-alert-id="${alert.id}" 
+                     data-resolve-time="${resolveTimestamp}">
+                    <div class="resolve-status">Will auto-resolve in</div>
+                    <div class="time-remaining">${alert.resolve_in_seconds}</div>
+                </div>
+                
+                <button class="resolve-btn" onclick="resolveAlert('${alert.id}')">
+                    Resolve Now
+                </button>
+            `;
+            
+            return alertDiv;
+        }
+        
+        function startAutoRefresh() {
+            // Refresh every 2 seconds
+            refreshInterval = setInterval(refreshAlerts, 2000);
+        }
+        
+        function stopAutoRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+        }
+        
         // Update timers every second
         setInterval(updateAlertTimers, 1000);
         
-        // Initial timer update
+        // Initial setup
         window.onload = function() {
             updateAlertTimers();
+            startAutoRefresh();
             
             const successMessage = document.querySelector('.alert-success');
             if (successMessage && successMessage.textContent.includes('Alert sent successfully')) {
@@ -463,6 +610,15 @@
                 successMessage.style.display = 'none';
             }
         };
+        
+        // Stop auto-refresh when page is hidden, resume when visible
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else {
+                startAutoRefresh();
+            }
+        });
     </script>
 </head>
 <body>
@@ -485,42 +641,44 @@
         {% endif %}
         
         <!-- Active Alerts Section -->
-        {% if active_alerts %}
         <div class="alerts-section">
-            <div class="section-title">Active Alerts ({{ active_alerts|length }})</div>
-            {% for alert in active_alerts %}
-            <div class="alert-item" data-alert-id="{{ alert.id }}">
-                <div class="alert-header">
-                    <div class="alert-title">{{ alert.summary }}</div>
-                    <div class="alert-severity severity-{{ alert.severity }}">{{ alert.severity }}</div>
-                </div>
-                
-                <div class="alert-details">
-                    <div class="alert-detail"><strong>Service:</strong> {{ alert.service }}</div>
-                    <div class="alert-detail"><strong>Description:</strong> {{ alert.description }}</div>
-                    <div class="alert-detail"><strong>Duration:</strong> {{ alert.duration }}</div>
-                    <div class="alert-detail"><strong>Sent:</strong> {{ alert.sent_at[:19] }}</div>
-                </div>
-                
-                <div class="resolve-time resolve-timer" 
-                     data-alert-id="{{ alert.id }}" 
-                     data-resolve-time="{{ alert.resolve_timestamp }}">
-                    <div class="resolve-status">Will auto-resolve in</div>
-                    <div class="time-remaining">{{ alert.resolve_in_seconds }}</div>
-                </div>
-                
-                <button class="resolve-btn" onclick="resolveAlert('{{ alert.id }}')">
-                    Resolve Now
-                </button>
+            <div class="alerts-header">
+                <div class="section-title">Active Alerts ({{ active_alerts|length }})</div>
             </div>
-            {% endfor %}
+            
+            <div class="alerts-container">
+                {% if active_alerts %}
+                    {% for alert in active_alerts %}
+                    <div class="alert-item" data-alert-id="{{ alert.id }}">
+                        <div class="alert-header">
+                            <div class="alert-title">{{ alert.summary }}</div>
+                            <div class="alert-severity severity-{{ alert.severity }}">{{ alert.severity }}</div>
+                        </div>
+                        
+                        <div class="alert-details">
+                            <div class="alert-detail"><strong>Service:</strong> {{ alert.service }}</div>
+                            <div class="alert-detail"><strong>Description:</strong> {{ alert.description }}</div>
+                            <div class="alert-detail"><strong>Duration:</strong> {{ alert.duration }}</div>
+                            <div class="alert-detail"><strong>Sent:</strong> {{ alert.sent_at[:19] }}</div>
+                        </div>
+                        
+                        <div class="resolve-time resolve-timer" 
+                             data-alert-id="{{ alert.id }}" 
+                             data-resolve-time="{{ alert.resolve_timestamp }}">
+                            <div class="resolve-status">Will auto-resolve in</div>
+                            <div class="time-remaining">{{ alert.resolve_in_seconds }}</div>
+                        </div>
+                        
+                        <button class="resolve-btn" onclick="resolveAlert('{{ alert.id }}')">
+                            Resolve Now
+                        </button>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="no-alerts">No active alerts</div>
+                {% endif %}
+            </div>
         </div>
-        {% else %}
-        <div class="alerts-section">
-            <div class="section-title">Active Alerts</div>
-            <div class="no-alerts">No active alerts</div>
-        </div>
-        {% endif %}
         
         <form method="POST">
             <!-- Labels and Annotations Section -->
