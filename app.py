@@ -336,7 +336,6 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {
         "request": request,
         "history": history,
-        "alertmanager_url": ALERTMANAGER_URL,
         "message": None,
         "message_type": None,
         "active_alerts": active_alerts,
@@ -387,7 +386,6 @@ async def send_alert(
         return templates.TemplateResponse("index.html", {
             "request": request,
             "history": history,
-            "alertmanager_url": ALERTMANAGER_URL,
             "message": "Severity and Duration are required fields",
             "message_type": "error",
             "form_data": {
@@ -406,7 +404,6 @@ async def send_alert(
         return templates.TemplateResponse("index.html", {
             "request": request,
             "history": history,
-            "alertmanager_url": ALERTMANAGER_URL,
             "message": "Invalid severity level",
             "message_type": "error",
             "form_data": {
@@ -477,7 +474,6 @@ async def send_alert(
         return templates.TemplateResponse("index.html", {
             "request": request,
             "history": history,
-            "alertmanager_url": ALERTMANAGER_URL,
             "message": message,
             "message_type": "success",
             "form_data": {
@@ -494,7 +490,6 @@ async def send_alert(
         return templates.TemplateResponse("index.html", {
             "request": request,
             "history": history,
-            "alertmanager_url": ALERTMANAGER_URL,
             "message": message,
             "message_type": "error",
             "form_data": {
