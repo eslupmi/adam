@@ -1,5 +1,6 @@
 {
   "summaries": [
+    "Sum",
     "ololo",
     "Summ",
     "Tmp",
@@ -8,8 +9,7 @@
     "\u0435\u0443\u044b\u0435\u0443\u0435\u0443",
     "tttt",
     "iuiu",
-    "tututu",
-    "TestAlert"
+    "tututu"
   ],
   "descriptions": [
     "ololo",
@@ -24,6 +24,7 @@
     "TestDesc"
   ],
   "services": [
+    "Tst",
     "ololo",
     "\u043a\u0443\u043a\u0443",
     "service",
@@ -32,8 +33,7 @@
     "test4",
     "test22",
     "test1",
-    "trap",
-    "rere"
+    "trap"
   ],
   "severities": [
     "critical",
@@ -41,6 +41,7 @@
     "warning"
   ],
   "durations": [
+    "1m",
     "5m",
     "1h",
     "15m",

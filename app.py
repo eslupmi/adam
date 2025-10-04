@@ -308,12 +308,38 @@ def parse_duration_to_seconds(duration_str):
 async def index(request: Request):
     """Main page with alert form"""
     history = load_form_history()
+    
+    # Get active alerts for display
+    alerts = load_sent_alerts()
+    active_alerts = []
+    
+    for alert in alerts:
+        if alert.get('status') == 'active':
+            # Calculate resolve time
+            sent_at_str = alert.get('sent_at')
+            duration_str = alert.get('duration', '5m')
+            
+            if sent_at_str:
+                try:
+                    sent_at = datetime.fromisoformat(sent_at_str.replace('Z', '+00:00'))
+                    duration_seconds = parse_duration_to_seconds(duration_str)
+                    resolve_at = sent_at + timedelta(seconds=duration_seconds)
+                    
+                    alert_info = alert.copy()
+                    alert_info['resolve_at'] = resolve_at.isoformat()
+                    alert_info['resolve_in_seconds'] = int((resolve_at - datetime.utcnow()).total_seconds())
+                    alert_info['resolve_timestamp'] = int(resolve_at.timestamp())
+                    active_alerts.append(alert_info)
+                except Exception as e:
+                    logger.warning(f"Failed to calculate resolve time for alert {alert.get('id')}: {e}")
+    
     return templates.TemplateResponse("index.html", {
         "request": request,
         "history": history,
         "alertmanager_url": ALERTMANAGER_URL,
         "message": None,
         "message_type": None,
+        "active_alerts": active_alerts,
         "form_data": {
             'summary': '',
             'description': '',
@@ -822,6 +848,36 @@ async def alerts_status():
         "total_alerts": len(alerts),
         "alerts": alerts,
         "alerts_directory": ALERTS_DIR
+    }
+
+@app.get("/api/alerts")
+async def get_alerts_api():
+    """Get active alerts with calculated resolve time"""
+    alerts = load_sent_alerts()
+    alerts_with_resolve_time = []
+    
+    for alert in alerts:
+        if alert.get('status') == 'active':
+            # Calculate resolve time
+            sent_at_str = alert.get('sent_at')
+            duration_str = alert.get('duration', '5m')
+            
+            if sent_at_str:
+                try:
+                    sent_at = datetime.fromisoformat(sent_at_str.replace('Z', '+00:00'))
+                    duration_seconds = parse_duration_to_seconds(duration_str)
+                    resolve_at = sent_at + timedelta(seconds=duration_seconds)
+                    
+                    alert_info = alert.copy()
+                    alert_info['resolve_at'] = resolve_at.isoformat()
+                    alert_info['resolve_in_seconds'] = int((resolve_at - datetime.utcnow()).total_seconds())
+                    alerts_with_resolve_time.append(alert_info)
+                except Exception as e:
+                    logger.warning(f"Failed to calculate resolve time for alert {alert.get('id')}: {e}")
+    
+    return {
+        "active_alerts": alerts_with_resolve_time,
+        "total_active": len(alerts_with_resolve_time)
     }
 
 if __name__ == "__main__":

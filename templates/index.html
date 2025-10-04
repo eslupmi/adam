@@ -187,6 +187,98 @@
             margin-bottom: 20px;
             border-left: 4px solid #2196F3;
         }
+        .alerts-section {
+            margin-bottom: 30px;
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        .alert-item {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .alert-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .alert-title {
+            font-weight: bold;
+            font-size: 16px;
+            color: #333;
+        }
+        .alert-severity {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .severity-critical {
+            background-color: #ffebee;
+            color: #c62828;
+            border: 1px solid #ffcdd2;
+        }
+        .severity-warning {
+            background-color: #fff3e0;
+            color: #ef6c00;
+            border: 1px solid #ffcc02;
+        }
+        .severity-info {
+            background-color: #e3f2fd;
+            color: #1565c0;
+            border: 1px solid #bbdefb;
+        }
+        .alert-details {
+            margin-bottom: 10px;
+        }
+        .alert-detail {
+            margin-bottom: 5px;
+            font-size: 14px;
+            color: #666;
+        }
+        .alert-detail strong {
+            color: #333;
+        }
+        .resolve-time {
+            background: #e8f5e8;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            border-left: 4px solid #4caf50;
+        }
+        .resolve-time.expired {
+            background: #ffebee;
+            border-left-color: #f44336;
+        }
+        .resolve-btn {
+            background: #4caf50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .resolve-btn:hover {
+            background: #45a049;
+        }
+        .resolve-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .no-alerts {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+            padding: 20px;
+        }
     </style>
     <script>
         function showSuggestions(inputId, suggestions) {
@@ -281,8 +373,90 @@
             }, 3000);
         }
         
-        // Show success message if present
+        function formatTimeRemaining(seconds) {
+            if (seconds <= 0) {
+                return "Expired";
+            }
+            
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            if (hours > 0) {
+                return `${hours}h ${minutes}m ${secs}s`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${secs}s`;
+            } else {
+                return `${secs}s`;
+            }
+        }
+        
+        function updateAlertTimers() {
+            const timers = document.querySelectorAll('.resolve-timer');
+            timers.forEach(timer => {
+                const alertId = timer.dataset.alertId;
+                const resolveTime = parseInt(timer.dataset.resolveTime);
+                const now = Math.floor(Date.now() / 1000);
+                const remaining = resolveTime - now;
+                
+                const timeElement = timer.querySelector('.time-remaining');
+                const statusElement = timer.querySelector('.resolve-status');
+                
+                if (remaining <= 0) {
+                    timeElement.textContent = "Expired";
+                    timer.classList.add('expired');
+                    statusElement.textContent = "Should be auto-resolved";
+                } else {
+                    timeElement.textContent = formatTimeRemaining(remaining);
+                    timer.classList.remove('expired');
+                    statusElement.textContent = "Will auto-resolve in";
+                }
+            });
+        }
+        
+        async function resolveAlert(alertId) {
+            const button = document.querySelector(`[data-alert-id="${alertId}"] .resolve-btn`);
+            if (button.disabled) return;
+            
+            button.disabled = true;
+            button.textContent = 'Resolving...';
+            
+            try {
+                const response = await fetch(`/resolve-alert/${alertId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert('Alert resolved successfully', 'success');
+                    // Remove the alert from the UI
+                    const alertElement = document.querySelector(`[data-alert-id="${alertId}"]`);
+                    if (alertElement) {
+                        alertElement.remove();
+                    }
+                } else {
+                    showAlert(`Failed to resolve alert: ${result.message}`, 'error');
+                    button.disabled = false;
+                    button.textContent = 'Resolve';
+                }
+            } catch (error) {
+                showAlert(`Error resolving alert: ${error.message}`, 'error');
+                button.disabled = false;
+                button.textContent = 'Resolve';
+            }
+        }
+        
+        // Update timers every second
+        setInterval(updateAlertTimers, 1000);
+        
+        // Initial timer update
         window.onload = function() {
+            updateAlertTimers();
+            
             const successMessage = document.querySelector('.alert-success');
             if (successMessage && successMessage.textContent.includes('Alert sent successfully')) {
                 showAlert('Alert sent successfully', 'success');
@@ -308,6 +482,44 @@
             <div class="alert alert-{{ message_type }}">
                 {{ message }}
             </div>
+        {% endif %}
+        
+        <!-- Active Alerts Section -->
+        {% if active_alerts %}
+        <div class="alerts-section">
+            <div class="section-title">Active Alerts ({{ active_alerts|length }})</div>
+            {% for alert in active_alerts %}
+            <div class="alert-item" data-alert-id="{{ alert.id }}">
+                <div class="alert-header">
+                    <div class="alert-title">{{ alert.summary }}</div>
+                    <div class="alert-severity severity-{{ alert.severity }}">{{ alert.severity }}</div>
+                </div>
+                
+                <div class="alert-details">
+                    <div class="alert-detail"><strong>Service:</strong> {{ alert.service }}</div>
+                    <div class="alert-detail"><strong>Description:</strong> {{ alert.description }}</div>
+                    <div class="alert-detail"><strong>Duration:</strong> {{ alert.duration }}</div>
+                    <div class="alert-detail"><strong>Sent:</strong> {{ alert.sent_at[:19] }}</div>
+                </div>
+                
+                <div class="resolve-time resolve-timer" 
+                     data-alert-id="{{ alert.id }}" 
+                     data-resolve-time="{{ alert.resolve_timestamp }}">
+                    <div class="resolve-status">Will auto-resolve in</div>
+                    <div class="time-remaining">{{ alert.resolve_in_seconds }}</div>
+                </div>
+                
+                <button class="resolve-btn" onclick="resolveAlert('{{ alert.id }}')">
+                    Resolve Now
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="alerts-section">
+            <div class="section-title">Active Alerts</div>
+            <div class="no-alerts">No active alerts</div>
+        </div>
         {% endif %}
         
         <form method="POST">

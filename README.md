@@ -15,6 +15,8 @@ A simple web interface for sending alerts to Alertmanager using the standard `am
 - **Alert management** - Close individual alerts or all alerts at once
 - **Automatic cleanup** - Remove old alert files automatically
 - **Debug logging** - Comprehensive logging with configurable levels
+- **Real-time alert display** - View active alerts with countdown timers
+- **Manual resolution** - Resolve alerts manually before auto-resolve
 
 ## Requirements
 
@@ -89,6 +91,24 @@ python app.py
    - **Custom Labels**: Optional key-value pairs for additional context
 
 4. Click "Send Alert" to send the alert to Alertmanager
+
+## Active Alerts Interface
+
+The main page now displays all active alerts with the following features:
+
+- **Real-time countdown** - Shows time remaining until auto-resolve
+- **Alert details** - Summary, description, service, severity, and duration
+- **Manual resolution** - "Resolve Now" button to close alerts immediately
+- **Status indicators** - Visual indicators for different severity levels
+- **Auto-refresh** - Timers update every second
+
+### Alert Display Features
+
+- **Countdown Timer**: Shows exact time remaining until auto-resolve
+- **Severity Badges**: Color-coded severity indicators (info, warning, critical)
+- **Resolve Button**: Manually resolve alerts before their scheduled time
+- **Alert Information**: Complete alert details including custom labels and annotations
+- **Real-time Updates**: Timers update automatically without page refresh
 
 ## API Documentation
 
