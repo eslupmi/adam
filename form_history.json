@@ -1,23 +1,31 @@
 {
   "summaries": [
+    "ololo",
+    "Summ",
+    "Tmp",
+    "Summary of alert",
     "summary",
     "\u0435\u0443\u044b\u0435\u0443\u0435\u0443",
     "tttt",
     "iuiu",
     "tututu",
-    "TestAlert",
-    "test"
+    "TestAlert"
   ],
   "descriptions": [
+    "ololo",
+    "DESC",
+    "Desc",
+    "Testing Description",
     "Descr",
     "\u0444\u0432\u0444\u044b\u0432\u0444\u044b\u0432\u0444\u044b\u0432",
     "tsdfd",
     "dsdsd",
     "dslk",
-    "TestDesc",
-    "test"
+    "TestDesc"
   ],
   "services": [
+    "ololo",
+    "\u043a\u0443\u043a\u0443",
     "service",
     "text",
     "test44",
@@ -25,9 +33,7 @@
     "test22",
     "test1",
     "trap",
-    "rere",
-    "tst",
-    "test"
+    "rere"
   ],
   "severities": [
     "critical",
