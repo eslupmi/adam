@@ -87,10 +87,11 @@ python app.py
 2. Open your browser and navigate to `http://localhost:5067`
 
 3. Fill in the alert details:
-   - **Summary**: Brief description of the alert
-   - **Description**: Detailed description of the alert
-   - **Severity**: Choose from info, warning, or critical
-   - **Service**: Name of the service affected
+   - **Summary**: Brief description of the alert (optional)
+   - **Description**: Detailed description of the alert (optional)
+   - **Severity**: Choose from info, warning, or critical (required)
+   - **Service**: Name of the service affected (optional)
+   - **Duration**: How long the alert should be active (required)
    - **Custom Labels**: Optional key-value pairs for additional context
 
 4. Click "Send Alert" to send the alert to Alertmanager

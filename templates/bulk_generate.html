@@ -16,24 +16,35 @@
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #2196F3;
+        }
         h1 {
             color: #333;
-            text-align: center;
-            margin-bottom: 30px;
+            margin: 0;
+            font-size: 28px;
         }
         .nav-links {
-            text-align: center;
-            margin-bottom: 30px;
+            display: flex;
+            gap: 15px;
         }
         .nav-links a {
             color: #2196F3;
             text-decoration: none;
-            margin: 0 15px;
             padding: 8px 16px;
             border: 1px solid #2196F3;
             border-radius: 4px;
         }
         .nav-links a:hover {
+            background-color: #2196F3;
+            color: white;
+        }
+        .nav-links a.active {
             background-color: #2196F3;
             color: white;
         }
@@ -97,98 +108,351 @@
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
-        .alerts-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-        .alerts-table th, .alerts-table td {
+        
+        /* Active Alerts Section Styles */
+        .alerts-section {
+            margin-bottom: 30px;
             border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
-        }
-        .alerts-table th {
-            background-color: #f2f2f2;
-            font-weight: bold;
-        }
-        .alerts-table tr:nth-child(even) {
+            padding: 20px;
+            border-radius: 8px;
             background-color: #f9f9f9;
         }
-        .resolve-btn {
-            background: #4CAF50;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            border-radius: 3px;
-            cursor: pointer;
+        
+        .alerts-header {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #2196F3;
+        }
+        
+        .alert-item {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .alert-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .alert-title {
+            font-weight: bold;
+            color: #333;
+            font-size: 16px;
+        }
+        
+        .alert-severity {
+            padding: 4px 8px;
+            border-radius: 4px;
             font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
         }
-        .resolve-btn:hover {
-            background: #45a049;
-        }
-        .severity-info {
-            background-color: #e3f2fd;
-            color: #1976d2;
-        }
-        .severity-warning {
-            background-color: #fff3e0;
-            color: #f57c00;
-        }
+        
         .severity-critical {
             background-color: #ffebee;
             color: #d32f2f;
         }
-        .config-info {
-            background: #e3f2fd;
-            padding: 15px;
+        
+        .severity-warning {
+            background-color: #fff3e0;
+            color: #f57c00;
+        }
+        
+        .severity-info {
+            background-color: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        .alert-details {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .alert-detail {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .alert-detail strong {
+            color: #333;
+        }
+        
+        .resolve-time {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .resolve-time.expired {
+            color: #d32f2f;
+            font-weight: bold;
+        }
+        
+        .resolve-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
             border-radius: 4px;
-            margin-bottom: 20px;
-            border-left: 4px solid #2196F3;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .resolve-btn:hover {
+            background: #45a049;
+        }
+        
+        .no-alerts {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+            padding: 20px;
+        }
+        
+        .loading-indicator {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #2196F3;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
     <script>
-        function resolveAlert(alertId) {
-            if (confirm('Are you sure you want to resolve this alert?')) {
-                fetch(`/resolve-alert/${alertId}`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
+        let autoRefreshInterval;
+        let isRefreshing = false;
+        
+        function formatTimeRemaining(seconds) {
+            if (seconds <= 0) return 'Expired';
+            
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            if (hours > 0) {
+                return `${hours}h ${minutes}m ${secs}s`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${secs}s`;
+            } else {
+                return `${secs}s`;
+            }
+        }
+        
+        function updateAlertTimers() {
+            const now = Math.floor(Date.now() / 1000);
+            const alerts = document.querySelectorAll('.alert-item');
+            
+            alerts.forEach(alert => {
+                const resolveTimeElement = alert.querySelector('.resolve-time');
+                const resolveTimestamp = parseInt(alert.dataset.resolveTime);
+                
+                if (resolveTimestamp && resolveTimeElement) {
+                    const timeRemaining = resolveTimestamp - now;
+                    const timeText = formatTimeRemaining(timeRemaining);
+                    
+                    resolveTimeElement.textContent = `Auto-resolves in: ${timeText}`;
+                    
+                    if (timeRemaining <= 0) {
+                        resolveTimeElement.classList.add('expired');
+                    } else {
+                        resolveTimeElement.classList.remove('expired');
                     }
-                })
+                }
+            });
+        }
+        
+        function resolveAlert(alertId) {
+            fetch(`/resolve-alert/${alertId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    refreshAlerts();
+                } else {
+                    alert('Failed to resolve alert: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('Error resolving alert: ' + error);
+            });
+        }
+        
+        function refreshAlerts() {
+            if (isRefreshing) return;
+            
+            isRefreshing = true;
+            const alertsSection = document.querySelector('.alerts-section');
+            if (!alertsSection) {
+                isRefreshing = false;
+                return;
+            }
+            
+            // Show loading indicator
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'loading-indicator';
+            loadingDiv.innerHTML = '<div class="loading-spinner"></div>Updating alerts...';
+            
+            // Insert loading indicator after header
+            const header = alertsSection.querySelector('.alerts-header');
+            if (header) {
+                header.insertAdjacentElement('afterend', loadingDiv);
+            }
+            
+            fetch('/api/alerts')
                 .then(response => response.json())
                 .then(data => {
-                    if (data.success) {
-                        alert('Alert resolved successfully!');
-                        location.reload();
-                    } else {
-                        alert('Failed to resolve alert: ' + data.message);
+                    updateAlertsDisplay(data.active_alerts);
+                    // Remove loading indicator
+                    if (loadingDiv.parentNode) {
+                        loadingDiv.parentNode.removeChild(loadingDiv);
                     }
                 })
                 .catch(error => {
-                    alert('Error resolving alert: ' + error);
+                    console.error('Error fetching alerts:', error);
+                    // Remove loading indicator
+                    if (loadingDiv.parentNode) {
+                        loadingDiv.parentNode.removeChild(loadingDiv);
+                    }
+                })
+                .finally(() => {
+                    isRefreshing = false;
                 });
+        }
+        
+        function updateAlertsDisplay(alerts) {
+            const alertsSection = document.querySelector('.alerts-section');
+            if (!alertsSection) return;
+            
+            // Find alerts container
+            let alertsContainer = alertsSection.querySelector('#active-alerts-container');
+            if (!alertsContainer) {
+                alertsContainer = document.createElement('div');
+                alertsContainer.id = 'active-alerts-container';
+                alertsSection.appendChild(alertsContainer);
+            }
+            
+            // Clear existing alerts
+            alertsContainer.innerHTML = '';
+            
+            if (alerts.length === 0) {
+                alertsContainer.innerHTML = '<div class="no-alerts">No active alerts</div>';
+                return;
+            }
+            
+            alertsContainer.innerHTML = alerts.map(alert => createAlertElement(alert)).join('');
+        }
+        
+        function createAlertElement(alert) {
+            const resolveAt = new Date(alert.resolve_at);
+            const resolveTimestamp = Math.floor(resolveAt.getTime() / 1000);
+            
+            return `
+                <div class="alert-item" data-resolve-time="${resolveTimestamp}">
+                    <div class="alert-header">
+                        <div class="alert-title">${alert.summary}</div>
+                        <div class="alert-severity severity-${alert.severity}">${alert.severity}</div>
+                    </div>
+                    <div class="alert-details">
+                        <div class="alert-detail"><strong>Description:</strong> ${alert.description}</div>
+                        <div class="alert-detail"><strong>Service:</strong> ${alert.service}</div>
+                        <div class="alert-detail"><strong>Duration:</strong> ${alert.duration}</div>
+                        <div class="alert-detail"><strong>Sent:</strong> ${alert.sent_at}</div>
+                    </div>
+                    <div class="resolve-time">Auto-resolves in: ${formatTimeRemaining(resolveTimestamp - Math.floor(Date.now() / 1000))}</div>
+                    <button class="resolve-btn" onclick="resolveAlert('${alert.id}')">Resolve Now</button>
+                </div>
+            `;
+        }
+        
+        function startAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+            
+            autoRefreshInterval = setInterval(() => {
+                updateAlertTimers();
+                refreshAlerts();
+            }, 2000);
+        }
+        
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
             }
         }
+        
+        // Pause auto-refresh when tab is not visible
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else {
+                startAutoRefresh();
+            }
+        });
+        
+        // Initialize on page load
+        window.onload = function() {
+            updateAlertTimers();
+            startAutoRefresh();
+        };
     </script>
 </head>
 <body>
     <div class="container">
-        <h1>ADAM - Bulk Alerts Generator</h1>
-        
-        <div class="nav-links">
-            <a href="/">Single Alert</a>
-            <a href="/bulk-generate">Bulk Generate</a>
+        <div class="header-container">
+            <h1>ADAM</h1>
+            <div class="nav-links">
+                <a href="/">Single Alert</a>
+                <a href="/bulk-generate" class="active">Bulk Generate</a>
+            </div>
         </div>
         
-        <div class="config-info">
-            <strong>Configuration:</strong> Alertmanager URL: {{ alertmanager_url }}
-        </div>
         
         {% if message %}
             <div class="alert alert-{{ message_type }}">
                 {{ message }}
             </div>
         {% endif %}
+        
+        <!-- Active Alerts Section -->
+        <div class="alerts-section">
+            <div class="alerts-header">Active Alerts</div>
+            <div id="active-alerts-container">
+                <div class="loading-indicator">
+                    <div class="loading-spinner"></div>
+                    Loading alerts...
+                </div>
+            </div>
+        </div>
         
         <!-- Bulk Generate Section -->
         <div class="form-section">
@@ -214,48 +478,6 @@
                 
                 <button type="submit" class="submit-btn">Generate Random Alerts</button>
             </form>
-        </div>
-        
-        <!-- Sent Alerts Section -->
-        <div class="form-section">
-            <div class="section-title">Sent Alerts ({{ sent_alerts|length }})</div>
-            
-            {% if sent_alerts %}
-                <table class="alerts-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Summary</th>
-                            <th>Severity</th>
-                            <th>Service</th>
-                            <th>Duration</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for alert in sent_alerts %}
-                            <tr>
-                                <td>{{ alert.sent_at[:19] }}</td>
-                                <td>{{ alert.summary }}</td>
-                                <td>
-                                    <span class="severity-{{ alert.severity }}">
-                                        {{ alert.severity }}
-                                    </span>
-                                </td>
-                                <td>{{ alert.service }}</td>
-                                <td>{{ alert.duration }}</td>
-                                <td>
-                                    <button class="resolve-btn" onclick="resolveAlert('{{ alert.id }}')">
-                                        Resolve Now
-                                    </button>
-                                </td>
-                            </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            {% else %}
-                <p>No alerts sent yet.</p>
-            {% endif %}
         </div>
     </div>
 </body>

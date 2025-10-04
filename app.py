@@ -100,13 +100,13 @@ def send_alert_with_curl(summary, description, severity, duration, service, cust
         alert_data = [
             {
                 "labels": {
-                    "alertname": summary,
+                    "alertname": summary or "Alert",
                     "severity": severity,
-                    "service": service
+                    "service": service or "unknown"
                 },
                 "annotations": {
-                    "summary": summary,
-                    "description": description
+                    "summary": summary or "Alert",
+                    "description": description or "No description provided"
                 },
                 "startsAt": starts_at,
                 "endsAt": None
@@ -178,13 +178,13 @@ def send_resolved_alert_with_curl(summary, description, severity, service, custo
         alert_data = [
             {
                 "labels": {
-                    "alertname": summary,
+                    "alertname": summary or "Alert",
                     "severity": severity,
-                    "service": service
+                    "service": service or "unknown"
                 },
                 "annotations": {
-                    "summary": summary,
-                    "description": description
+                    "summary": summary or "Alert",
+                    "description": description or "No description provided"
                 },
                 "startsAt": starts_at,
                 "endsAt": ends_at
@@ -380,15 +380,15 @@ async def send_alert(
         if i < len(annotation_values) and key.strip() and annotation_values[i].strip():
             custom_annotations[key.strip()] = annotation_values[i].strip()
     
-    # Validate required fields
+    # Validate required fields (only severity and duration are required now)
     logger.debug(f"Validating form fields - Summary: '{summary.strip()}', Description: '{description.strip()}', Severity: '{severity.strip()}', Duration: '{duration.strip()}', Service: '{service.strip()}'")
-    if not all([summary.strip(), description.strip(), severity.strip(), duration.strip(), service.strip()]):
-        logger.warning("Form validation failed - one or more required fields are empty")
+    if not all([severity.strip(), duration.strip()]):
+        logger.warning("Form validation failed - severity or duration fields are empty")
         return templates.TemplateResponse("index.html", {
             "request": request,
             "history": history,
             "alertmanager_url": ALERTMANAGER_URL,
-            "message": "All required fields must be filled",
+            "message": "Severity and Duration are required fields",
             "message_type": "error",
             "form_data": {
                 'summary': summary,
@@ -698,11 +698,8 @@ def cleanup_old_alerts(days_old=7):
 @app.get("/bulk-generate", response_class=HTMLResponse)
 async def bulk_generate_page(request: Request):
     """Bulk generate alerts page"""
-    sent_alerts = get_sent_alerts()
     return templates.TemplateResponse("bulk_generate.html", {
-        "request": request,
-        "alertmanager_url": ALERTMANAGER_URL,
-        "sent_alerts": sent_alerts
+        "request": request
     })
 
 @app.post("/bulk-generate", response_class=HTMLResponse)
@@ -804,11 +801,8 @@ async def bulk_generate_alerts(
     if errors:
         logger.warning(f"Errors during bulk generation: {errors}")
     
-    sent_alerts = get_sent_alerts()
     return templates.TemplateResponse("bulk_generate.html", {
         "request": request,
-        "alertmanager_url": ALERTMANAGER_URL,
-        "sent_alerts": sent_alerts,
         "message": f"Generated {generated_count} alerts successfully" + (f". Errors: {len(errors)}" if errors else ""),
         "message_type": "success" if generated_count > 0 else "error"
     })
