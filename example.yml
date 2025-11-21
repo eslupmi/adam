@@ -1,0 +1,44 @@
+assigned_fullname: ''
+assigned_user: ''
+assigned_user_id: ''
+chain: []
+chain_enabled: false
+channel_id: C07NSUK599T
+created: 2025-11-21 05:35:33.169687+00:00
+messenger_type: slack
+payload:
+  alerts:
+  - annotations:
+      summary: Instance unavailable
+    endsAt: '0001-01-01T00:00:00Z'
+    fingerprint: a7ddb1de342424cb
+    generatorURL: http://eva:9090/graph?g0.expr=up+%3D%3D+0&g0.tab=1
+    labels:
+      alertname: InstanceDown4
+      instance: localhost:9100
+      job: user
+      severity: critical
+    startsAt: '2024-07-28T19:26:43.604Z'
+    status: firing
+  commonAnnotations:
+    summary: Instance unavailable
+  commonLabels:
+    alertname: InstanceDown
+    instance: localhost:9100
+    job: user
+    severity: critical
+  externalURL: http://eva:9093
+  groupKey: '{}:{alertname="InstanceDown"}'
+  groupLabels:
+    alertname: InstanceDown
+  receiver: webhook-alerts
+  status: firing
+  truncatedAlerts: 0
+  version: '4'
+status: firing
+status_enabled: true
+status_update_datetime: 2025-11-22 05:36:33.169604+00:00
+task_link: ''
+ts: '1763703334.262219'
+updated: 2025-11-21 05:35:33.169570+00:00
+version: v3.2.0
