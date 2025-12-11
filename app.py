@@ -4,6 +4,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 import json
 import os
+import sys
 import asyncio
 import uuid
 import logging
@@ -33,7 +34,8 @@ level = log_level_map.get(log_level, logging.DEBUG)
 
 logging.basicConfig(
     level=level,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
 
