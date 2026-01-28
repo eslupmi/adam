@@ -845,8 +845,8 @@
             row.dataset.alertId = alert.id;
             row.dataset.status = normalizeStatus(alert.status);
 
-            const statusClass = isResolvedByUntil(alert) ? 'status-resolved' : 'status-firing';
             const isResolved = normalizeStatus(alert.status) === 'resolved';
+            const statusClass = isResolved ? 'status-resolved' : (isResolvedByUntil(alert) ? 'status-resolved' : 'status-firing');
             
             const allLabels = {...alert.custom_labels};
             if (alert.severity) allLabels.severity = alert.severity;
