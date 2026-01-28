@@ -153,7 +153,7 @@ def generate_random_label_value(label_key: str):
     else:
         return f"value-{random.randint(1, 1000)}"
 
-def send_alert_with_curl(summary, description, severity, duration, service, custom_labels, custom_annotations):
+def send_alert_with_curl(alertname, summary, description, severity, duration, service, custom_labels, custom_annotations):
     """Send alert using curl command to Alertmanager API"""
     logger.debug(f"Starting alert sending process - Summary: '{summary}', Severity: '{severity}', Service: '{service}'")
     
@@ -167,7 +167,7 @@ def send_alert_with_curl(summary, description, severity, duration, service, cust
         alert_data = [
             {
                 "labels": {
-                    "alertname": summary or "Alert",
+                    "alertname": alertname or "Alert",
                     "severity": severity,
                     "service": service or "unknown"
                 },
@@ -189,7 +189,6 @@ def send_alert_with_curl(summary, description, severity, duration, service, cust
                 alert_data[0]["annotations"][annotation_key] = annotation_value
                 logger.debug(f"Added custom annotation: '{annotation_key}' = '{annotation_value}'")
         
-        # Add summary and description only if provided
         if summary:
             alert_data[0]["annotations"]["summary"] = summary
         if description:
@@ -234,7 +233,7 @@ def send_alert_with_curl(summary, description, severity, duration, service, cust
         logger.error(f"Unexpected error sending alert: {str(e)}", exc_info=True)
         return False, f"Error sending alert: {str(e)}"
 
-def send_resolved_alert_with_curl(summary, description, severity, service, custom_labels, custom_annotations):
+def send_resolved_alert_with_curl(alertname, summary, description, severity, service, custom_labels, custom_annotations):
     """Send resolved alert using curl command to Alertmanager API"""
     logger.debug(f"Starting resolved alert sending process - Summary: '{summary}', Severity: '{severity}', Service: '{service}'")
     
@@ -249,7 +248,7 @@ def send_resolved_alert_with_curl(summary, description, severity, service, custo
         alert_data = [
             {
                 "labels": {
-                    "alertname": summary or "Alert",
+                    "alertname": alertname or "Alert",
                     "severity": severity,
                     "service": service or "unknown"
                 },
@@ -271,13 +270,6 @@ def send_resolved_alert_with_curl(summary, description, severity, service, custo
                 alert_data[0]["annotations"][annotation_key] = annotation_value
                 logger.debug(f"Added custom annotation to resolved alert: '{annotation_key}' = '{annotation_value}'")
         
-        # Add summary and description only if provided
-        if summary:
-            alert_data[0]["annotations"]["summary"] = summary
-        if description:
-            alert_data[0]["annotations"]["description"] = description
-        
-        # Add summary and description only if provided
         if summary:
             alert_data[0]["annotations"]["summary"] = summary
         if description:
@@ -339,7 +331,7 @@ async def auto_resolve_alert(duration_str, summary, description, severity, servi
         
         # Send resolved alert
         success, message = send_resolved_alert_with_curl(
-            summary, description, severity, service, custom_labels, custom_annotations
+            alertname, summary, description, severity, service, custom_labels, custom_annotations
         )
         
         if success:
@@ -466,6 +458,7 @@ async def create_alert_api(
     """API endpoint to create alert from JSON"""
     try:
         data = await request.json()
+        alertname = data.get('alertname', '').strip()
         summary = data.get('summary', '').strip()
         description = data.get('description', '').strip()
         severity = data.get('severity', '').strip()
@@ -485,7 +478,7 @@ async def create_alert_api(
             return {"success": False, "message": "Invalid severity level"}
         
         success, message = send_alert_with_curl(
-            summary, description, severity, duration, service, custom_labels, custom_annotations
+            alertname, summary, description, severity, duration, service, custom_labels, custom_annotations
         )
         
         if success:
@@ -508,6 +501,7 @@ async def create_alert_api(
             
             alert_info = {
                 'id': alert_id,
+                'alertname': alertname,
                 'summary': summary,
                 'description': description,
                 'severity': severity,
@@ -620,11 +614,12 @@ async def send_alert(
     
     # Send alert using curl
     success, message = send_alert_with_curl(
-        summary.strip(), 
-        description.strip(), 
+        summary.strip(),
+        summary.strip(),
+        description.strip(),
         severity.strip(),
         duration.strip(),
-        service.strip(), 
+        service.strip(),
         custom_labels,
         custom_annotations
     )
@@ -800,7 +795,8 @@ async def resolve_sent_alert(alert_id):
             logger.info(f"Found alert to resolve: '{alert.get('summary', 'Unknown')}' (Service: {alert.get('service', 'Unknown')})")
             # Send resolved alert
             success, message = send_resolved_alert_with_curl(
-                alert['summary'],
+                alert.get('alertname') or alert.get('summary', ''),
+                alert.get('custom_annotations', {}).get('summary') or alert.get('summary', ''),
                 alert['description'],
                 alert['severity'],
                 alert['service'],
@@ -915,7 +911,8 @@ async def toggle_alert_status_endpoint(alert_id: str):
             
             if new_status == 'resolved':
                 success, message = send_resolved_alert_with_curl(
-                    alert['summary'],
+                    alert.get('alertname') or alert.get('summary', ''),
+                    alert.get('custom_annotations', {}).get('summary') or alert.get('summary', ''),
                     alert['description'],
                     alert['severity'],
                     alert['service'],
@@ -931,7 +928,8 @@ async def toggle_alert_status_endpoint(alert_id: str):
                 alert['resolved_at'] = resolved_at
             else:
                 success, message = send_alert_with_curl(
-                    alert['summary'],
+                    alert.get('alertname') or alert.get('summary', ''),
+                    alert.get('custom_annotations', {}).get('summary') or alert.get('summary', ''),
                     alert['description'],
                     alert['severity'],
                     alert.get('duration', '5m'),
@@ -1052,6 +1050,7 @@ async def update_alert_endpoint(alert_id: str, request: Request):
     """Update existing resolved alert and resend it as active"""
     try:
         data = await request.json()
+        alertname = data.get('alertname', '').strip()
         summary = data.get('summary', '').strip()
         description = data.get('description', '').strip()
         severity = data.get('severity', '').strip()
@@ -1059,6 +1058,7 @@ async def update_alert_endpoint(alert_id: str, request: Request):
         service = data.get('service', '').strip()
         custom_labels = data.get('custom_labels', {})
         custom_annotations = data.get('custom_annotations', {})
+        client_row_id = data.get('client_row_id')
         
         if not duration:
             return {"success": False, "message": "Duration is required field"}
@@ -1073,7 +1073,7 @@ async def update_alert_endpoint(alert_id: str, request: Request):
             return {"success": False, "message": "Alert not found"}
         
         success, message = send_alert_with_curl(
-            summary, description, severity, duration, service, custom_labels, custom_annotations
+            alertname, summary, description, severity, duration, service, custom_labels, custom_annotations
         )
         
         if success:

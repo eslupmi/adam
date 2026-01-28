@@ -201,6 +201,8 @@
             justify-content: center;
             height: 32px;
             box-sizing: border-box;
+            line-height: 1;
+            vertical-align: middle;
         }
         .send-btn {
             background: #2196F3;
@@ -563,10 +565,9 @@
                 severity = 'default';
             }
             
-            const finalAlertname = alertname || summary || 'Alert';
-            
             const alertData = {
-                summary: finalAlertname,
+                alertname: alertname || '',
+                summary: summary,
                 severity: severity,
                 duration: duration,
                 service: customLabels.service || '',
@@ -851,7 +852,10 @@
             if (alert.severity) allLabels.severity = alert.severity;
             else allLabels.severity = 'default';
             if (alert.service) allLabels.service = alert.service;
-            const alertname = alert.summary || alert.id;
+            const alertname =
+                (alert.alertname || '') ||
+                ((alert.custom_labels && alert.custom_labels.alertname) || '') ||
+                (((alert.custom_annotations && alert.custom_annotations.summary) || '') ? '' : (alert.summary || ''));
             if (alertname) allLabels.alertname = alertname;
             
             const labelsArray = Object.entries(allLabels).filter(([k, v]) => k && v);
@@ -1110,7 +1114,8 @@
                 });
                 
                 const alertData = {
-                    summary: alertname || summary || 'Alert',
+                    alertname: alertname || '',
+                    summary: summary,
                     description: description,
                     severity: severity,
                     service: customLabels.service || '',
@@ -1152,7 +1157,7 @@
             const allLabels = {...alert.custom_labels};
             if (alert.severity) allLabels.severity = alert.severity;
             if (alert.service) allLabels.service = alert.service;
-            const alertname = alert.summary || '';
+            const alertname = alert.alertname || '';
             if (alertname) allLabels.alertname = alertname;
             
             const labelsArray = Object.entries(allLabels).filter(([k, v]) => k && v);
