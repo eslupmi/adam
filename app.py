@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -8,11 +8,12 @@ import sys
 import asyncio
 import uuid
 import logging
-from datetime import datetime, timedelta
-from typing import List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Set
 import uvicorn
 import requests
 from dotenv import load_dotenv
+import random
 
 # Load environment variables from .env file
 load_dotenv()
@@ -58,6 +59,35 @@ logger.debug(f"Alerts directory created/verified: {ALERTS_DIR}")
 # Templates
 templates = Jinja2Templates(directory="templates")
 
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Set[WebSocket] = set()
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.add(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.discard(websocket)
+
+    async def broadcast(self, message: dict):
+        disconnected = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception as e:
+                logger.warning(f"Failed to send WebSocket message: {e}")
+                disconnected.append(connection)
+        
+        for connection in disconnected:
+            self.disconnect(connection)
+
+manager = ConnectionManager()
+
+# In-memory storage for all alerts
+alerts_storage: dict = {}
+
 def load_form_history():
     """Load form field history from JSON file"""
     if os.path.exists(HISTORY_FILE):
@@ -88,13 +118,48 @@ def add_to_history(history, field, value):
         # Keep only last 10 entries
         history[field] = history[field][:10]
 
+def generate_random_alertname():
+    """Generate random alertname using noun + adjective pattern"""
+    summary_nouns = [
+        "Database", "Connection", "Memory", "CPU", "Disk", "Network", "Service", "API", "Cache", "Queue",
+        "Timeout", "Error", "Failure", "Warning", "Critical", "Overflow", "Underflow", "Server", "Client", "Process"
+    ]
+    
+    summary_adjectives = [
+        "High", "Low", "Critical", "Warning", "Error", "Failed", "Slow", "Fast", "Overloaded", "Underutilized",
+        "Broken", "Unstable", "Degraded", "Unavailable", "Responsive", "Unresponsive", "Healthy", "Unhealthy"
+    ]
+    
+    return f"{random.choice(summary_nouns)}{random.choice(summary_adjectives)}"
+
+def generate_random_label_value(label_key: str):
+    """Generate random value for a label based on its key"""
+    label_key_lower = label_key.lower()
+    
+    if 'service' in label_key_lower:
+        service_names = [
+            "auth-service", "api-gateway", "user-service", "payment-service", "notification-service",
+            "database-service", "cache-service", "queue-service", "storage-service", "monitoring-service",
+            "frontend-app", "backend-api", "mobile-api", "admin-panel", "analytics-service",
+            "search-service", "email-service", "sms-service", "file-service", "log-service"
+        ]
+        return random.choice(service_names)
+    elif 'environment' in label_key_lower or 'env' in label_key_lower:
+        return random.choice(["production", "staging", "development", "testing"])
+    elif 'team' in label_key_lower:
+        return random.choice(["devops", "backend", "frontend", "qa", "security"])
+    elif 'region' in label_key_lower:
+        return random.choice(["us-east", "us-west", "eu-west", "eu-central", "asia-pacific"])
+    else:
+        return f"value-{random.randint(1, 1000)}"
+
 def send_alert_with_curl(summary, description, severity, duration, service, custom_labels, custom_annotations):
     """Send alert using curl command to Alertmanager API"""
     logger.debug(f"Starting alert sending process - Summary: '{summary}', Severity: '{severity}', Service: '{service}'")
     
     try:
         # Generate ISO8601 timestamps
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         starts_at = (now - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
         logger.debug(f"Generated timestamps - Now: {now}, StartsAt: {starts_at}")
         
@@ -106,15 +171,11 @@ def send_alert_with_curl(summary, description, severity, duration, service, cust
                     "severity": severity,
                     "service": service or "unknown"
                 },
-                "annotations": {
-                    "summary": summary or "Alert",
-                    "description": description or "No description provided"
-                },
+                "annotations": {},
                 "startsAt": starts_at,
                 "endsAt": None
             }
         ]
-        logger.debug(f"Initial alert payload created: {json.dumps(alert_data, indent=2)}")
         
         # Add custom labels
         for label_key, label_value in custom_labels.items():
@@ -122,11 +183,19 @@ def send_alert_with_curl(summary, description, severity, duration, service, cust
                 alert_data[0]["labels"][label_key] = label_value
                 logger.debug(f"Added custom label: '{label_key}' = '{label_value}'")
         
-        # Add custom annotations
+        # Add custom annotations (only if they have values)
         for annotation_key, annotation_value in custom_annotations.items():
             if annotation_key and annotation_value:
                 alert_data[0]["annotations"][annotation_key] = annotation_value
                 logger.debug(f"Added custom annotation: '{annotation_key}' = '{annotation_value}'")
+        
+        # Add summary and description only if provided
+        if summary:
+            alert_data[0]["annotations"]["summary"] = summary
+        if description:
+            alert_data[0]["annotations"]["description"] = description
+        
+        logger.debug(f"Initial alert payload created: {json.dumps(alert_data, indent=2)}")
         
         # Prepare headers
         headers = {
@@ -171,7 +240,7 @@ def send_resolved_alert_with_curl(summary, description, severity, service, custo
     
     try:
         # Generate ISO8601 timestamps
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         starts_at = (now - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
         ends_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         logger.debug(f"Generated resolved alert timestamps - Now: {now}, StartsAt: {starts_at}, EndsAt: {ends_at}")
@@ -184,15 +253,11 @@ def send_resolved_alert_with_curl(summary, description, severity, service, custo
                     "severity": severity,
                     "service": service or "unknown"
                 },
-                "annotations": {
-                    "summary": summary or "Alert",
-                    "description": description or "No description provided"
-                },
+                "annotations": {},
                 "startsAt": starts_at,
                 "endsAt": ends_at
             }
         ]
-        logger.debug(f"Initial resolved alert payload created: {json.dumps(alert_data, indent=2)}")
         
         # Add custom labels
         for label_key, label_value in custom_labels.items():
@@ -200,11 +265,25 @@ def send_resolved_alert_with_curl(summary, description, severity, service, custo
                 alert_data[0]["labels"][label_key] = label_value
                 logger.debug(f"Added custom label to resolved alert: '{label_key}' = '{label_value}'")
         
-        # Add custom annotations
+        # Add custom annotations (only if they have values)
         for annotation_key, annotation_value in custom_annotations.items():
             if annotation_key and annotation_value:
                 alert_data[0]["annotations"][annotation_key] = annotation_value
                 logger.debug(f"Added custom annotation to resolved alert: '{annotation_key}' = '{annotation_value}'")
+        
+        # Add summary and description only if provided
+        if summary:
+            alert_data[0]["annotations"]["summary"] = summary
+        if description:
+            alert_data[0]["annotations"]["description"] = description
+        
+        # Add summary and description only if provided
+        if summary:
+            alert_data[0]["annotations"]["summary"] = summary
+        if description:
+            alert_data[0]["annotations"]["description"] = description
+        
+        logger.debug(f"Initial resolved alert payload created: {json.dumps(alert_data, indent=2)}")
         
         # Prepare headers
         headers = {
@@ -269,16 +348,18 @@ async def auto_resolve_alert(duration_str, summary, description, severity, servi
             # If alert_id is provided, update status and remove the alert file
             if alert_id:
                 # Update alert status to resolved
-                resolved_at = datetime.utcnow().isoformat()
+                resolved_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                 update_alert_status(alert_id, 'resolved', resolved_at)
                 
-                # Remove the alert file after a short delay to allow status update
-                await asyncio.sleep(1)
-                file_removed = remove_alert_file(alert_id)
-                if file_removed:
-                    logger.info(f"Removed alert file for auto-resolved alert: '{summary}'")
-                else:
-                    logger.warning(f"Failed to remove alert file for auto-resolved alert: '{summary}'")
+                # Broadcast update via WebSocket
+                if alert_id in alerts_storage:
+                    alert = alerts_storage[alert_id]
+                    alert['status'] = 'resolved'
+                    alert['resolved_at'] = resolved_at
+                    await manager.broadcast({
+                        "type": "alert_resolved",
+                        "data": alert
+                    })
         else:
             logger.error(f"Failed to auto-resolve alert: '{summary}' - {message}")
             
@@ -306,51 +387,162 @@ def parse_duration_to_seconds(duration_str):
         logger.warning(f"Unknown duration format '{duration_str}', defaulting to 5 minutes (300 seconds)")
         return 300
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    """Main page with alert form"""
-    history = load_form_history()
-    
-    # Get active alerts for display
-    alerts = load_sent_alerts()
-    active_alerts = []
-    
-    for alert in alerts:
-        if alert.get('status') == 'active':
-            # Calculate resolve time
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time alert updates"""
+    logger.info(f"WebSocket connection attempt from {websocket.client}")
+    try:
+        await manager.connect(websocket)
+        logger.info("WebSocket client connected")
+        
+        alerts = load_sent_alerts()
+        alerts_with_status = []
+        
+        for alert in alerts:
+            alert_info = alert.copy()
             sent_at_str = alert.get('sent_at')
             duration_str = alert.get('duration', '5m')
             
-            if sent_at_str:
+            if sent_at_str and alert.get('status') == 'active':
                 try:
                     sent_at = datetime.fromisoformat(sent_at_str.replace('Z', '+00:00'))
                     duration_seconds = parse_duration_to_seconds(duration_str)
                     resolve_at = sent_at + timedelta(seconds=duration_seconds)
-                    
-                    alert_info = alert.copy()
                     alert_info['resolve_at'] = resolve_at.isoformat()
-                    alert_info['resolve_in_seconds'] = int((resolve_at - datetime.utcnow()).total_seconds())
+                    alert_info['resolve_in_seconds'] = int((resolve_at - datetime.now(timezone.utc)).total_seconds())
                     alert_info['resolve_timestamp'] = int(resolve_at.timestamp())
-                    active_alerts.append(alert_info)
                 except Exception as e:
                     logger.warning(f"Failed to calculate resolve time for alert {alert.get('id')}: {e}")
+            
+            alerts_with_status.append(alert_info)
+        
+        await websocket.send_json({
+            "type": "initial_data",
+            "data": alerts_with_status
+        })
+        
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+        logger.info("WebSocket client disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}", exc_info=True)
+        manager.disconnect(websocket)
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    """Main page with unified table interface"""
+    alerts = load_sent_alerts()
+    alerts_with_status = []
+    
+    for alert in alerts:
+        alert_info = alert.copy()
+        sent_at_str = alert.get('sent_at')
+        duration_str = alert.get('duration', '5m')
+        
+        if sent_at_str and alert.get('status') == 'active':
+            try:
+                sent_at = datetime.fromisoformat(sent_at_str.replace('Z', '+00:00'))
+                duration_seconds = parse_duration_to_seconds(duration_str)
+                resolve_at = sent_at + timedelta(seconds=duration_seconds)
+                alert_info['resolve_at'] = resolve_at.isoformat()
+                alert_info['resolve_in_seconds'] = int((resolve_at - datetime.now(timezone.utc)).total_seconds())
+                alert_info['resolve_timestamp'] = int(resolve_at.timestamp())
+            except Exception as e:
+                logger.warning(f"Failed to calculate resolve time for alert {alert.get('id')}: {e}")
+        
+        alerts_with_status.append(alert_info)
     
     return templates.TemplateResponse("index.html", {
         "request": request,
-        "history": history,
-        "message": None,
-        "message_type": None,
-        "active_alerts": active_alerts,
-        "form_data": {
-            'summary': '',
-            'description': '',
-            'severity': '',
-            'duration': '',
-            'service': '',
-            'custom_labels': {},
-            'custom_annotations': {}
-        }
+        "alerts": alerts_with_status
     })
+
+@app.post("/api/alerts/create")
+async def create_alert_api(
+    request: Request
+):
+    """API endpoint to create alert from JSON"""
+    try:
+        data = await request.json()
+        summary = data.get('summary', '').strip()
+        description = data.get('description', '').strip()
+        severity = data.get('severity', '').strip()
+        duration = data.get('duration', '').strip()
+        service = data.get('service', '').strip()
+        custom_labels = data.get('custom_labels', {})
+        custom_annotations = data.get('custom_annotations', {})
+        client_row_id = data.get('client_row_id')
+        
+        if not duration:
+            return {"success": False, "message": "Duration is required field"}
+        
+        if not severity:
+            severity = 'default'
+        
+        if severity not in ['default', 'info', 'warning', 'critical']:
+            return {"success": False, "message": "Invalid severity level"}
+        
+        success, message = send_alert_with_curl(
+            summary, description, severity, duration, service, custom_labels, custom_annotations
+        )
+        
+        if success:
+            alert_id = str(uuid.uuid4())
+            sent_at_dt = datetime.now(timezone.utc)
+            sent_at = sent_at_dt.isoformat().replace("+00:00", "Z")
+            
+            try:
+                sent_at_dt = datetime.fromisoformat(sent_at.replace('Z', '+00:00'))
+                duration_seconds = parse_duration_to_seconds(duration)
+                resolve_at = sent_at_dt + timedelta(seconds=duration_seconds)
+                resolve_at_iso = resolve_at.isoformat()
+                resolve_in_seconds = int((resolve_at - datetime.now(timezone.utc)).total_seconds())
+                resolve_timestamp = int(resolve_at.timestamp())
+            except Exception as e:
+                logger.warning(f"Failed to calculate resolve time: {e}")
+                resolve_at_iso = None
+                resolve_in_seconds = None
+                resolve_timestamp = None
+            
+            alert_info = {
+                'id': alert_id,
+                'summary': summary,
+                'description': description,
+                'severity': severity,
+                'service': service,
+                'duration': duration,
+                'custom_labels': custom_labels,
+                'custom_annotations': custom_annotations,
+                'sent_at': sent_at,
+                'status': 'active',
+                'auto_resolve_scheduled': True,
+                'resolve_at': resolve_at_iso,
+                'resolve_in_seconds': resolve_in_seconds,
+                'resolve_timestamp': resolve_timestamp,
+                'client_row_id': client_row_id
+            }
+            
+            logger.info(f"Creating alert with status='active', resolve_timestamp={resolve_timestamp}, duration={duration}")
+            
+            add_sent_alert(alert_info)
+            
+            await manager.broadcast({
+                "type": "alert_added",
+                "data": alert_info
+            })
+            
+            asyncio.create_task(auto_resolve_alert(
+                duration, summary, description, severity, service, custom_labels, custom_annotations, alert_id
+            ))
+            
+            return {"success": True, "message": message, "alert": alert_info}
+        else:
+            return {"success": False, "message": message}
+    except Exception as e:
+        logger.error(f"Error creating alert: {e}", exc_info=True)
+        return {"success": False, "message": f"Error: {str(e)}"}
 
 @app.post("/", response_class=HTMLResponse)
 async def send_alert(
@@ -381,14 +573,14 @@ async def send_alert(
         if i < len(annotation_values) and key.strip() and annotation_values[i].strip():
             custom_annotations[key.strip()] = annotation_values[i].strip()
     
-    # Validate required fields (only severity and duration are required now)
+    # Validate required fields (only duration is required now)
     logger.debug(f"Validating form fields - Summary: '{summary.strip()}', Description: '{description.strip()}', Severity: '{severity.strip()}', Duration: '{duration.strip()}', Service: '{service.strip()}'")
-    if not all([severity.strip(), duration.strip()]):
-        logger.warning("Form validation failed - severity or duration fields are empty")
+    if not duration.strip():
+        logger.warning("Form validation failed - duration field is empty")
         return templates.TemplateResponse("index.html", {
             "request": request,
             "history": history,
-            "message": "Severity and Duration are required fields",
+            "message": "Duration is required field",
             "message_type": "error",
             "form_data": {
                 'summary': summary,
@@ -401,7 +593,12 @@ async def send_alert(
             }
         })
     
-    if severity not in ['info', 'warning', 'critical']:
+    if not severity.strip():
+        severity = 'default'
+    else:
+        severity = severity.strip()
+    
+    if severity not in ['default', 'info', 'warning', 'critical']:
         logger.warning(f"Form validation failed - invalid severity level: '{severity}'")
         return templates.TemplateResponse("index.html", {
             "request": request,
@@ -437,6 +634,8 @@ async def send_alert(
         alert_id = str(uuid.uuid4())
         
         # Save alert info for later resolve
+        sent_at_dt = datetime.now(timezone.utc)
+        sent_at = sent_at_dt.isoformat().replace("+00:00", "Z")
         alert_info = {
             'id': alert_id,
             'summary': summary.strip(),
@@ -446,11 +645,28 @@ async def send_alert(
             'duration': duration.strip(),
             'custom_labels': custom_labels,
             'custom_annotations': custom_annotations,
-            'sent_at': datetime.utcnow().isoformat(),
+            'sent_at': sent_at,
             'status': 'active',
             'auto_resolve_scheduled': True
         }
         add_sent_alert(alert_info)
+        
+        # Calculate resolve time for WebSocket broadcast
+        try:
+            sent_at_dt = datetime.fromisoformat(sent_at.replace('Z', '+00:00'))
+            duration_seconds = parse_duration_to_seconds(duration.strip())
+            resolve_at = sent_at_dt + timedelta(seconds=duration_seconds)
+            alert_info['resolve_at'] = resolve_at.isoformat()
+            alert_info['resolve_in_seconds'] = int((resolve_at - datetime.now(timezone.utc)).total_seconds())
+            alert_info['resolve_timestamp'] = int(resolve_at.timestamp())
+        except Exception as e:
+            logger.warning(f"Failed to calculate resolve time: {e}")
+        
+        # Broadcast new alert via WebSocket
+        await manager.broadcast({
+            "type": "alert_added",
+            "data": alert_info
+        })
         
         # Start auto-resolve task
         logger.info(f"Created auto-resolve task for alert: '{summary.strip()}' with duration: {duration.strip()}")
@@ -473,55 +689,39 @@ async def send_alert(
         add_to_history(history, 'durations', duration.strip())
         save_form_history(history)
         
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "history": history,
-            "message": message,
-            "message_type": "success",
-            "form_data": {
-                'summary': '',
-                'description': '',
-                'severity': '',
-                'duration': '',
-                'service': '',
-                'custom_labels': {},
-                'custom_annotations': {}
-            }
-        })
+        return RedirectResponse(url="/", status_code=303)
     else:
+        alerts = load_sent_alerts()
+        alerts_with_status = []
+        
+        for alert in alerts:
+            alert_info = alert.copy()
+            sent_at_str = alert.get('sent_at')
+            duration_str = alert.get('duration', '5m')
+            
+            if sent_at_str and alert.get('status') == 'active':
+                try:
+                    sent_at = datetime.fromisoformat(sent_at_str.replace('Z', '+00:00'))
+                    duration_seconds = parse_duration_to_seconds(duration_str)
+                    resolve_at = sent_at + timedelta(seconds=duration_seconds)
+                    alert_info['resolve_at'] = resolve_at.isoformat()
+                    alert_info['resolve_in_seconds'] = int((resolve_at - datetime.now(timezone.utc)).total_seconds())
+                    alert_info['resolve_timestamp'] = int(resolve_at.timestamp())
+                except Exception as e:
+                    logger.warning(f"Failed to calculate resolve time for alert {alert.get('id')}: {e}")
+            
+            alerts_with_status.append(alert_info)
+        
         return templates.TemplateResponse("index.html", {
             "request": request,
-            "history": history,
-            "message": message,
-            "message_type": "error",
-            "form_data": {
-                'summary': summary,
-                'description': description,
-                'severity': severity,
-                'duration': duration,
-                'service': service,
-                'custom_labels': custom_labels,
-                'custom_annotations': custom_annotations
-            }
+            "alerts": alerts_with_status,
+            "error_message": message
         })
 
 def load_sent_alerts():
-    """Load all sent alerts from JSON files in alerts directory"""
-    alerts = []
-    try:
-        if os.path.exists(ALERTS_DIR):
-            for filename in os.listdir(ALERTS_DIR):
-                if filename.endswith('.json'):
-                    filepath = os.path.join(ALERTS_DIR, filename)
-                    try:
-                        with open(filepath, 'r') as f:
-                            alert_data = json.load(f)
-                            alerts.append(alert_data)
-                    except Exception as e:
-                        logger.warning(f"Failed to load alert file {filename}: {e}")
-        logger.debug(f"Loaded {len(alerts)} alerts from {ALERTS_DIR} directory")
-    except Exception as e:
-        logger.error(f"Error loading alerts from directory: {e}")
+    """Load all sent alerts from in-memory storage"""
+    alerts = list(alerts_storage.values())
+    logger.debug(f"Loaded {len(alerts)} alerts from memory")
     return alerts
 
 def save_alert_to_file(alert_info):
@@ -547,54 +747,49 @@ def remove_alert_file(alert_id):
     try:
         if os.path.exists(filepath):
             os.remove(filepath)
-            logger.debug(f"Alert file removed: {filepath}")
+            logger.info(f"Alert file removed: {filepath}")
+            if os.path.exists(filepath):
+                logger.error(f"Alert file still exists after removal attempt: {filepath}")
+                return False
             return True
         else:
-            logger.warning(f"Alert file not found: {filepath}")
-            return False
+            logger.debug(f"Alert file not found (may have been already deleted): {filepath}")
+            return True
     except Exception as e:
-        logger.error(f"Failed to remove alert file {filepath}: {e}")
+        logger.error(f"Failed to remove alert file {filepath}: {e}", exc_info=True)
         return False
 
 def update_alert_status(alert_id, status, resolved_at=None):
-    """Update alert status in the JSON file"""
-    filename = f"{alert_id}.json"
-    filepath = os.path.join(ALERTS_DIR, filename)
-    
+    """Update alert status in memory storage"""
     try:
-        if os.path.exists(filepath):
-            with open(filepath, 'r') as f:
-                alert_data = json.load(f)
-            
-            alert_data['status'] = status
+        if alert_id in alerts_storage:
+            alerts_storage[alert_id]['status'] = status
             if resolved_at:
-                alert_data['resolved_at'] = resolved_at
-            
-            with open(filepath, 'w') as f:
-                json.dump(alert_data, f, indent=2)
-            
+                alerts_storage[alert_id]['resolved_at'] = resolved_at
+            save_alert_to_file(alerts_storage[alert_id])
             logger.debug(f"Updated alert status to '{status}' for alert: {alert_id}")
             return True
         else:
-            logger.warning(f"Alert file not found for status update: {filepath}")
+            logger.warning(f"Alert not found in memory for status update: {alert_id}")
             return False
     except Exception as e:
         logger.error(f"Failed to update alert status for {alert_id}: {e}")
         return False
 
 def add_sent_alert(alert_info):
-    """Add alert to sent alerts directory"""
-    logger.debug(f"Adding alert to alerts directory: '{alert_info.get('summary', 'Unknown')}' (ID: {alert_info.get('id', 'Unknown')})")
-    success = save_alert_to_file(alert_info)
-    if success:
-        logger.debug(f"Alert added successfully to alerts directory")
-    return success
+    """Add alert to in-memory storage"""
+    alert_id = alert_info.get('id', 'unknown')
+    logger.debug(f"Adding alert to memory: '{alert_info.get('summary', 'Unknown')}' (ID: {alert_id})")
+    alerts_storage[alert_id] = alert_info
+    save_alert_to_file(alert_info)
+    logger.debug(f"Alert added successfully to memory storage")
+    return True
 
 def get_sent_alerts():
     """Get all sent alerts"""
     return load_sent_alerts()
 
-def resolve_sent_alert(alert_id):
+async def resolve_sent_alert(alert_id):
     """Resolve a specific sent alert"""
     logger.info(f"Attempting to resolve alert with ID: {alert_id}")
     alerts = load_sent_alerts()
@@ -613,14 +808,22 @@ def resolve_sent_alert(alert_id):
                 alert.get('custom_annotations', {})
             )
             if success:
-                # Remove alert file from directory
-                file_removed = remove_alert_file(alert_id)
-                if file_removed:
-                    logger.info(f"Successfully resolved and removed alert '{alert.get('summary', 'Unknown')}' from alerts directory")
-                    return True, "Alert resolved successfully"
-                else:
-                    logger.warning(f"Alert resolved but file removal failed for '{alert.get('summary', 'Unknown')}'")
-                    return True, "Alert resolved but file cleanup failed"
+                # Update status
+                resolved_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                update_alert_status(alert_id, 'resolved', resolved_at)
+                
+                # Broadcast update
+                if alert_id in alerts_storage:
+                    alert = alerts_storage[alert_id]
+                    alert['status'] = 'resolved'
+                    alert['resolved_at'] = resolved_at
+                    await manager.broadcast({
+                        "type": "alert_resolved",
+                        "data": alert
+                    })
+                
+                logger.info(f"Successfully resolved alert '{alert.get('summary', 'Unknown')}'")
+                return True, "Alert resolved successfully"
             else:
                 logger.error(f"Failed to resolve alert '{alert.get('summary', 'Unknown')}': {message}")
                 return False, message
@@ -668,7 +871,7 @@ def close_all_alerts():
 def cleanup_old_alerts(days_old=7):
     """Remove alert files older than specified days"""
     logger.info(f"Starting cleanup of alerts older than {days_old} days")
-    cutoff_time = datetime.utcnow() - timedelta(days=days_old)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(days=days_old)
     removed_count = 0
     
     try:
@@ -692,123 +895,96 @@ def cleanup_old_alerts(days_old=7):
         logger.error(f"Error during cleanup: {e}")
         return 0
 
-@app.get("/bulk-generate", response_class=HTMLResponse)
-async def bulk_generate_page(request: Request):
-    """Bulk generate alerts page"""
-    return templates.TemplateResponse("bulk_generate.html", {
-        "request": request
-    })
-
-@app.post("/bulk-generate", response_class=HTMLResponse)
-async def bulk_generate_alerts(
-    request: Request,
-    count: int = Form(10),
-    duration: str = Form("5m")
-):
-    """Generate multiple random alerts"""
-    logger.info(f"Starting bulk generate alerts - Count: {count}, Duration: {duration}")
-    import random
-    
-    # Random words for summaries and descriptions
-    summary_nouns = [
-        "Database", "Connection", "Memory", "CPU", "Disk", "Network", "Service", "API", "Cache", "Queue",
-        "Timeout", "Error", "Failure", "Warning", "Critical", "Overflow", "Underflow", "Server", "Client", "Process"
-    ]
-    
-    summary_adjectives = [
-        "High", "Low", "Critical", "Warning", "Error", "Failed", "Slow", "Fast", "Overloaded", "Underutilized",
-        "Broken", "Unstable", "Degraded", "Unavailable", "Responsive", "Unresponsive", "Healthy", "Unhealthy"
-    ]
-    
-    description_words = [
-        "is experiencing issues", "has high latency", "is running out of resources", "is not responding",
-        "has exceeded threshold", "is down", "is slow", "is overloaded", "has errors", "needs attention",
-        "requires maintenance", "is unstable", "has performance problems", "is failing", "is degraded"
-    ]
-    
-    # Random service names
-    service_names = [
-        "auth-service", "api-gateway", "user-service", "payment-service", "notification-service",
-        "database-service", "cache-service", "queue-service", "storage-service", "monitoring-service",
-        "frontend-app", "backend-api", "mobile-api", "admin-panel", "analytics-service",
-        "search-service", "email-service", "sms-service", "file-service", "log-service"
-    ]
-    
-    severities = ["info", "warning", "critical"]
-    logger.debug(f"Generated random data pools - Nouns: {len(summary_nouns)}, Adjectives: {len(summary_adjectives)}, Descriptions: {len(description_words)}, Services: {len(service_names)}")
-    
-    generated_count = 0
-    errors = []
-    
-    logger.info(f"Starting generation loop for {count} alerts")
-    
-    for i in range(count):
-        try:
-            # Generate random alert data
-            summary = f"{random.choice(summary_nouns)}{random.choice(summary_adjectives)}"
-            description = f"{summary} {random.choice(description_words)}"
-            severity = random.choice(severities)
-            service = random.choice(service_names)
-            
-            logger.debug(f"Generated alert #{i+1}: '{summary}' (Severity: {severity}, Service: {service})")
-            
-            # Send alert
-            success, message = send_alert_with_curl(
-                summary, description, severity, duration, service, {}, {}
-            )
-            
-            if success:
-                # Generate unique alert ID
-                alert_id = str(uuid.uuid4())
-                logger.debug(f"Generated alert ID: {alert_id} for alert: '{summary}'")
-                
-                # Save alert info
-                alert_info = {
-                    'id': alert_id,
-                    'summary': summary,
-                    'description': description,
-                    'severity': severity,
-                    'service': service,
-                    'duration': duration,
-                    'custom_labels': {},
-                    'custom_annotations': {},
-                    'sent_at': datetime.utcnow().isoformat(),
-                    'status': 'active',
-                    'auto_resolve_scheduled': True
-                }
-                add_sent_alert(alert_info)
-                logger.debug(f"Saved alert info for alert: '{summary}' to sent_alerts.json")
-                
-                # Start auto-resolve task
-                asyncio.create_task(auto_resolve_alert(
-                    duration, summary, description, severity, service, {}, {}, alert_id
-                ))
-                
-                logger.info(f"Successfully generated alert #{i+1}/{count}: '{summary}'")
-                generated_count += 1
-            else:
-                errors.append(f"Alert {i+1}: {message}")
-                logger.error(f"Failed to generate alert #{i+1}: '{summary}' - {message}")
-                
-        except Exception as e:
-            errors.append(f"Alert {i+1}: {str(e)}")
-            logger.error(f"Exception generating alert #{i+1}: {str(e)}", exc_info=True)
-    
-    logger.info(f"Bulk generation completed - Successfully generated: {generated_count}/{count} alerts, Errors: {len(errors)}")
-    if errors:
-        logger.warning(f"Errors during bulk generation: {errors}")
-    
-    return templates.TemplateResponse("bulk_generate.html", {
-        "request": request,
-        "message": f"Generated {generated_count} alerts successfully" + (f". Errors: {len(errors)}" if errors else ""),
-        "message_type": "success" if generated_count > 0 else "error"
-    })
 
 @app.post("/resolve-alert/{alert_id}")
 async def resolve_alert_endpoint(alert_id: str):
     """Resolve a specific alert"""
-    success, message = resolve_sent_alert(alert_id)
+    success, message = await resolve_sent_alert(alert_id)
     return {"success": success, "message": message}
+
+@app.post("/toggle-alert-status/{alert_id}")
+async def toggle_alert_status_endpoint(alert_id: str):
+    """Toggle alert status between firing and resolved"""
+    logger.info(f"Toggling alert status for ID: {alert_id}")
+    alerts = load_sent_alerts()
+    
+    for alert in alerts:
+        if alert.get('id') == alert_id:
+            current_status = alert.get('status', 'active')
+            new_status = 'resolved' if current_status == 'active' else 'active'
+            
+            if new_status == 'resolved':
+                success, message = send_resolved_alert_with_curl(
+                    alert['summary'],
+                    alert['description'],
+                    alert['severity'],
+                    alert['service'],
+                    alert.get('custom_labels', {}),
+                    alert.get('custom_annotations', {})
+                )
+                if not success:
+                    return {"success": False, "message": message}
+                
+                resolved_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                update_alert_status(alert_id, 'resolved', resolved_at)
+                alert['status'] = 'resolved'
+                alert['resolved_at'] = resolved_at
+            else:
+                success, message = send_alert_with_curl(
+                    alert['summary'],
+                    alert['description'],
+                    alert['severity'],
+                    alert.get('duration', '5m'),
+                    alert['service'],
+                    alert.get('custom_labels', {}),
+                    alert.get('custom_annotations', {})
+                )
+                if not success:
+                    return {"success": False, "message": message}
+                
+                sent_at_dt = datetime.now(timezone.utc)
+                sent_at = sent_at_dt.isoformat().replace("+00:00", "Z")
+                alert['status'] = 'active'
+                alert['sent_at'] = sent_at
+                if 'resolved_at' in alert:
+                    del alert['resolved_at']
+                
+                try:
+                    sent_at_dt = datetime.fromisoformat(sent_at.replace('Z', '+00:00'))
+                    duration_seconds = parse_duration_to_seconds(alert.get('duration', '5m'))
+                    resolve_at = sent_at_dt + timedelta(seconds=duration_seconds)
+                    alert['resolve_at'] = resolve_at.isoformat()
+                    alert['resolve_in_seconds'] = int((resolve_at - datetime.now(timezone.utc)).total_seconds())
+                    alert['resolve_timestamp'] = int(resolve_at.timestamp())
+                except Exception as e:
+                    logger.warning(f"Failed to calculate resolve time: {e}")
+                
+                if alert_id in alerts_storage:
+                    alerts_storage[alert_id].update(alert)
+                    save_alert_to_file(alerts_storage[alert_id])
+                else:
+                    alerts_storage[alert_id] = alert
+                    save_alert_to_file(alert)
+                
+                asyncio.create_task(auto_resolve_alert(
+                    alert.get('duration', '5m'),
+                    alert['summary'],
+                    alert['description'],
+                    alert['severity'],
+                    alert['service'],
+                    alert.get('custom_labels', {}),
+                    alert.get('custom_annotations', {}),
+                    alert_id
+                ))
+            
+            await manager.broadcast({
+                "type": "alert_update",
+                "data": alert
+            })
+            
+            return {"success": True, "message": f"Alert status changed to {new_status}", "status": new_status}
+    
+    return {"success": False, "message": "Alert not found"}
 
 @app.post("/close-all-alerts")
 async def close_all_alerts_endpoint():
@@ -831,6 +1007,167 @@ async def cleanup_old_alerts_endpoint(days_old: int = 7):
         "message": f"Removed {removed_count} old alert files"
     }
 
+@app.post("/update-alert-duration/{alert_id}")
+async def update_alert_duration_endpoint(alert_id: str, request: Request):
+    """Update alert duration and recalculate resolve time"""
+    try:
+        data = await request.json()
+        new_duration = data.get('duration', '5m')
+        
+        if alert_id in alerts_storage:
+            alert = alerts_storage[alert_id]
+            if alert.get('status') == 'active':
+                alert['duration'] = new_duration
+                
+                sent_at_str = alert.get('sent_at')
+                if sent_at_str:
+                    try:
+                        sent_at = datetime.fromisoformat(sent_at_str.replace('Z', '+00:00'))
+                        duration_seconds = parse_duration_to_seconds(new_duration)
+                        resolve_at = sent_at + timedelta(seconds=duration_seconds)
+                        alert['resolve_at'] = resolve_at.isoformat()
+                        alert['resolve_in_seconds'] = int((resolve_at - datetime.now(timezone.utc)).total_seconds())
+                        alert['resolve_timestamp'] = int(resolve_at.timestamp())
+                    except Exception as e:
+                        logger.warning(f"Failed to calculate resolve time: {e}")
+                
+                save_alert_to_file(alert)
+                
+                await manager.broadcast({
+                    "type": "alert_update",
+                    "data": alert
+                })
+                
+                return {"success": True, "message": "Duration updated", "alert": alert}
+            else:
+                return {"success": False, "message": "Can only update duration for active alerts"}
+        else:
+            return {"success": False, "message": "Alert not found"}
+    except Exception as e:
+        logger.error(f"Error updating alert duration: {e}", exc_info=True)
+        return {"success": False, "message": f"Error: {str(e)}"}
+
+@app.post("/api/alerts/update/{alert_id}")
+async def update_alert_endpoint(alert_id: str, request: Request):
+    """Update existing resolved alert and resend it as active"""
+    try:
+        data = await request.json()
+        summary = data.get('summary', '').strip()
+        description = data.get('description', '').strip()
+        severity = data.get('severity', '').strip()
+        duration = data.get('duration', '').strip()
+        service = data.get('service', '').strip()
+        custom_labels = data.get('custom_labels', {})
+        custom_annotations = data.get('custom_annotations', {})
+        
+        if not duration:
+            return {"success": False, "message": "Duration is required field"}
+        
+        if not severity:
+            severity = 'default'
+        
+        if severity not in ['default', 'info', 'warning', 'critical']:
+            return {"success": False, "message": "Invalid severity level"}
+        
+        if alert_id not in alerts_storage:
+            return {"success": False, "message": "Alert not found"}
+        
+        success, message = send_alert_with_curl(
+            summary, description, severity, duration, service, custom_labels, custom_annotations
+        )
+        
+        if success:
+            sent_at_dt = datetime.now(timezone.utc)
+            sent_at = sent_at_dt.isoformat().replace("+00:00", "Z")
+            
+            try:
+                sent_at_dt = datetime.fromisoformat(sent_at.replace('Z', '+00:00'))
+                duration_seconds = parse_duration_to_seconds(duration)
+                resolve_at = sent_at_dt + timedelta(seconds=duration_seconds)
+                resolve_at_iso = resolve_at.isoformat()
+                resolve_in_seconds = int((resolve_at - datetime.now(timezone.utc)).total_seconds())
+                resolve_timestamp = int(resolve_at.timestamp())
+            except Exception as e:
+                logger.warning(f"Failed to calculate resolve time: {e}")
+                resolve_at_iso = None
+                resolve_in_seconds = None
+                resolve_timestamp = None
+            
+            alert_info = alerts_storage[alert_id]
+            alert_info.update({
+                'summary': summary,
+                'description': description,
+                'severity': severity,
+                'service': service,
+                'duration': duration,
+                'custom_labels': custom_labels,
+                'custom_annotations': custom_annotations,
+                'sent_at': sent_at,
+                'status': 'active',
+                'auto_resolve_scheduled': True,
+                'resolve_at': resolve_at_iso,
+                'resolve_in_seconds': resolve_in_seconds,
+                'resolve_timestamp': resolve_timestamp,
+                'client_row_id': client_row_id
+            })
+            
+            if 'resolved_at' in alert_info:
+                del alert_info['resolved_at']
+            
+            save_alert_to_file(alert_info)
+            
+            asyncio.create_task(auto_resolve_alert(
+                duration, summary, description, severity, service, custom_labels, custom_annotations, alert_id
+            ))
+            
+            await manager.broadcast({
+                "type": "alert_update",
+                "data": alert_info
+            })
+            
+            logger.info(f"Alert updated and resent: {alert_id}")
+            return {"success": True, "message": "Alert updated and sent", "alert": alert_info}
+        else:
+            return {"success": False, "message": message}
+    except Exception as e:
+        logger.error(f"Error updating alert: {e}", exc_info=True)
+        return {"success": False, "message": f"Error: {str(e)}"}
+
+@app.post("/delete-alert/{alert_id}")
+async def delete_alert_endpoint(alert_id: str):
+    """Delete alert from memory and file system"""
+    try:
+        if alert_id in alerts_storage:
+            alert = alerts_storage[alert_id]
+            logger.info(f"Deleting alert: {alert_id} - {alert.get('summary', 'Unknown')}")
+            
+            del alerts_storage[alert_id]
+            logger.debug(f"Alert removed from memory: {alert_id}")
+            
+            file_removed = remove_alert_file(alert_id)
+            if file_removed:
+                logger.debug(f"Alert file removed: {alert_id}")
+            else:
+                logger.warning(f"Alert file not found or failed to remove: {alert_id}")
+            
+            await manager.broadcast({
+                "type": "alert_removed",
+                "data": {"id": alert_id}
+            })
+            
+            logger.info(f"Alert deleted successfully: {alert_id}")
+            return {"success": True, "message": "Alert deleted"}
+        else:
+            logger.warning(f"Alert not found in memory: {alert_id}")
+            file_removed = remove_alert_file(alert_id)
+            if file_removed:
+                logger.info(f"Alert file removed even though not in memory: {alert_id}")
+                return {"success": True, "message": "Alert file deleted"}
+            return {"success": False, "message": "Alert not found"}
+    except Exception as e:
+        logger.error(f"Error deleting alert: {e}", exc_info=True)
+        return {"success": False, "message": f"Error: {str(e)}"}
+
 @app.get("/alerts/status")
 async def alerts_status():
     """Get status of all alerts"""
@@ -840,6 +1177,11 @@ async def alerts_status():
         "alerts": alerts,
         "alerts_directory": ALERTS_DIR
     }
+
+@app.get("/test-ws")
+async def test_ws():
+    """Test endpoint to verify WebSocket route exists"""
+    return {"message": "WebSocket endpoint should be at /ws", "routes": [str(route) for route in app.routes if hasattr(route, 'path')]}
 
 @app.get("/api/alerts")
 async def get_alerts_api():
@@ -861,7 +1203,7 @@ async def get_alerts_api():
                     
                     alert_info = alert.copy()
                     alert_info['resolve_at'] = resolve_at.isoformat()
-                    alert_info['resolve_in_seconds'] = int((resolve_at - datetime.utcnow()).total_seconds())
+                    alert_info['resolve_in_seconds'] = int((resolve_at - datetime.now(timezone.utc)).total_seconds())
                     alerts_with_resolve_time.append(alert_info)
                 except Exception as e:
                     logger.warning(f"Failed to calculate resolve time for alert {alert.get('id')}: {e}")
@@ -871,6 +1213,32 @@ async def get_alerts_api():
         "total_active": len(alerts_with_resolve_time)
     }
 
+def load_alerts_from_files():
+    """Load existing alerts from files into memory on startup"""
+    try:
+        if os.path.exists(ALERTS_DIR):
+            for filename in os.listdir(ALERTS_DIR):
+                if filename.endswith('.json'):
+                    filepath = os.path.join(ALERTS_DIR, filename)
+                    try:
+                        with open(filepath, 'r') as f:
+                            alert_data = json.load(f)
+                            alert_id = alert_data.get('id')
+                            if alert_id:
+                                alerts_storage[alert_id] = alert_data
+                    except Exception as e:
+                        logger.warning(f"Failed to load alert file {filename}: {e}")
+        logger.info(f"Loaded {len(alerts_storage)} alerts from files into memory")
+    except Exception as e:
+        logger.error(f"Error loading alerts from files: {e}")
+
 if __name__ == "__main__":
+    load_alerts_from_files()
     port = int(os.environ.get("ADAM_PORT", 5067))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    logger.info(f"Starting server on 0.0.0.0:{port}")
+    logger.info(f"WebSocket endpoint available at ws://0.0.0.0:{port}/ws")
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=port, ws="websockets")
+    except Exception as e:
+        logger.warning(f"Failed to use websockets backend, trying auto: {e}")
+        uvicorn.run(app, host="0.0.0.0", port=port, ws="auto")
